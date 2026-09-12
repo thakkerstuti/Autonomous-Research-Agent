@@ -1,6 +1,22 @@
-node_modules
-.next
-out
+# Node / Frontend
+node_modules/
+.next/
+out/
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# Environment and sensitive files
 .env*
+!.env.example
+
+# OS and logs
 .DS_Store
 *.log
