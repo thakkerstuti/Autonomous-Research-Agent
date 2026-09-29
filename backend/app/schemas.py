@@ -18,6 +18,7 @@ class SourceClassification(BaseModel):
     stance: Literal["supports", "refutes", "neutral"]
     confidence: float
     quote: str = ""
+    study: str = ""
 
 
 class HypothesisFollowup(BaseModel):
