@@ -1,27 +1,19 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { mockPapers, mockReport, mockSessions, mockUsage } from "./mock-data";
 import { PaperItem, ResearchReport, SessionSummary, UsageMeter } from "./types";
 
-const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
-
-// Swap each of these for a real fetch("/api/...") call once the backend exists.
 async function fetchSessions(): Promise<SessionSummary[]> {
-  await delay();
-  return mockSessions;
+  return [];
 }
 async function fetchPapers(): Promise<PaperItem[]> {
-  await delay();
-  return mockPapers;
+  return [];
 }
-async function fetchReport(): Promise<ResearchReport> {
-  await delay();
-  return mockReport;
+async function fetchReport(): Promise<ResearchReport | null> {
+  return null;
 }
 async function fetchUsage(): Promise<UsageMeter[]> {
-  await delay();
-  return mockUsage;
+  return [];
 }
 
 export const useSessionsQuery = () => useQuery({ queryKey: ["sessions"], queryFn: fetchSessions, staleTime: 30_000 });

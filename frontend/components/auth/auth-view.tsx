@@ -97,18 +97,13 @@ export function AuthView({ mode }: AuthViewProps) {
 
     setLoading(true);
 
-    // Simulate authenticating
-    setTimeout(() => {
-      login({
-        name: fullName || email.split("@")[0].replace(".", " ") || "Researcher",
-        email: email,
-        role: role,
-      });
-      setSuccessMessage("Signed in successfully! Redirecting to workspace...");
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 1000);
-    }, 900);
+    login({
+      name: fullName || email.split("@")[0].replace(".", " ") || "Researcher",
+      email: email,
+      role: role,
+    });
+    setSuccessMessage("Signed in successfully! Redirecting to workspace...");
+    router.push("/dashboard");
   };
 
   const handleSignUpSubmit = (e: React.FormEvent) => {
@@ -142,66 +137,39 @@ export function AuthView({ mode }: AuthViewProps) {
 
     setLoading(true);
 
-    setTimeout(() => {
-      login({
-        name: fullName,
-        email: email,
-        role: role,
-        institution: "Academic Workspace",
-      });
-      setSuccessMessage("Account created successfully! Welcome to CogNexa.");
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 1000);
-    }, 1100);
-  };
+    login({
+      name: fullName,
+      email: email,
+      role: role,
+      institution: "Academic Workspace",
+    });
+    setSuccessMessage("Account created successfully! Welcome to CogNexa.");
+    router.push("/dashboard");
 
-  const handleDemoAccess = () => {
-    setLoading(true);
-    setErrorMessage(null);
-    setTimeout(() => {
-      login({
-        name: "Dr. Alex Morgan",
-        email: "alex.morgan@cognexa.ai",
-        role: "Lead Researcher",
-        institution: "Stanford AI Lab",
-      });
-      setSuccessMessage("Demo access granted! Redirecting to workspace...");
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 800);
-    }, 600);
   };
 
   const handleSocialAuth = (provider: string) => {
     setSocialLoading(provider);
     setErrorMessage(null);
-    setTimeout(() => {
-      login({
-        name: provider === "ORCID" ? "Dr. Samira Khan (ORCID)" : `${provider} User`,
-        email: `user.${provider.toLowerCase()}@cognexa.ai`,
-        role: "Academic Researcher",
-      });
-      setSuccessMessage(`Authenticated via ${provider}! Opening workspace...`);
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 900);
-    }, 1000);
+    login({
+      name: provider === "ORCID" ? "Dr. Samira Khan (ORCID)" : `${provider} User`,
+      email: `user.${provider.toLowerCase()}@cognexa.ai`,
+      role: "Academic Researcher",
+    });
+    setSuccessMessage(`Authenticated via ${provider}! Opening workspace...`);
+    router.push("/dashboard");
   };
 
   const handleForgotSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!forgotEmail || !forgotEmail.includes("@")) return;
     setForgotSubmitting(true);
-    setTimeout(() => {
-      setForgotSubmitting(false);
-      setForgotSuccess(true);
-    }, 1000);
+    setForgotSubmitting(false);
+    setForgotSuccess(true);
   };
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center bg-bg p-4 sm:p-6 lg:p-8 overflow-hidden font-sans text-ink">
-      <div className="absolute top-4 right-4 z-50 rounded bg-yellow-500/20 px-2 py-1 text-xs font-medium text-yellow-500 border border-yellow-500/40">Sample data</div>
       {/* Dynamic Ambient Background Elements */}
       <div className="absolute -top-40 -left-40 h-[500px] w-[500px] rounded-full bg-grad1/10 blur-[130px] pointer-events-none" />
       <div className="absolute top-1/2 -right-40 h-[500px] w-[500px] rounded-full bg-grad2/10 blur-[140px] pointer-events-none" />
@@ -321,26 +289,6 @@ export function AuthView({ mode }: AuthViewProps) {
             </div>
           </div>
 
-          {/* Quick Demo Access Bar */}
-          <div className="mb-6 rounded-xl border border-grad1/30 bg-gradient-to-r from-grad1/10 via-grad2/10 to-transparent p-3 flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <Sparkles size={16} className="text-grad1 flex-shrink-0" />
-              <div className="truncate">
-                <span className="font-semibold text-ink block truncate">Quick Demo Sandbox Mode</span>
-                <span className="text-ink-soft truncate">Instant sign in as Dr. Alex Morgan (Stanford AI Lab)</span>
-              </div>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleDemoAccess}
-              disabled={loading}
-              className="border-grad1/40 hover:bg-grad1/20 text-ink flex-shrink-0 text-xs"
-            >
-              {loading ? <Loader2 size={13} className="animate-spin" /> : "Try Demo"}
-            </Button>
-          </div>
 
           {/* Error & Success Feedback Banners */}
           {errorMessage && (

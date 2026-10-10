@@ -16,7 +16,6 @@ export default function ReportPage() {
 
   return (
     <div className="animate-view-in h-full overflow-y-auto px-10 py-10 relative">
-      <div className="absolute top-4 right-4 z-50 rounded bg-yellow-500/20 px-2 py-1 text-xs font-medium text-yellow-500 border border-yellow-500/40">Sample data</div>
       <div className="mx-auto max-w-3xl">
         <p className="text-xs text-ink-faint">Research Report · updated {report.updated}</p>
         <h1 className="mt-1 font-serif text-2xl font-semibold">{report.question}</h1>
