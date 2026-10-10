@@ -27,7 +27,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
       ) : (
         <>
           <AgentStepsCard message={message} />
-          {message.answer && <p className="text-sm leading-relaxed text-ink-soft">{message.answer}</p>}
+          {message.answer && <p className="text-sm leading-relaxed text-ink-soft whitespace-pre-wrap">{message.answer}</p>}
         </>
       )}
     </div>

@@ -53,7 +53,7 @@ export function ChatView({ mode }: { mode: Mode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumeQuestion]);
 
-  function send(text: string, isResume = false) {
+  async function send(text: string, isResume = false) {
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", text, status: "done" };
     const assistantId = crypto.randomUUID();
     const assistantMsg: ChatMessage = { id: assistantId, role: "assistant", status: "pending" };
@@ -63,6 +63,67 @@ export function ChatView({ mode }: { mode: Mode }) {
     } else {
       appendMessage(mode, userMsg);
       appendMessage(mode, assistantMsg);
+    }
+
+    if (mode === "research") {
+      updateMessage(mode, assistantId, { 
+        status: "pending", 
+        steps: [{ label: "Starting", detail: "Initializing connection..." }] 
+      });
+      
+      const wakeTimer = setTimeout(() => {
+        updateMessage(mode, assistantId, { 
+          status: "pending", 
+          steps: [{ label: "Waking the server", detail: "This can take up to a minute..." }] 
+        });
+      }, 4000);
+
+      try {
+        const { apiClient, ApiError } = await import("@/lib/api");
+        const res = await apiClient<any>("/research", {
+          method: "POST",
+          body: JSON.stringify({ question: text }),
+        });
+        clearTimeout(wakeTimer);
+
+        const { adaptResearchResponseToSteps } = await import("@/lib/adapters");
+        const events = adaptResearchResponseToSteps(res);
+        
+        let finalSteps: { label: string; detail: string }[] = [];
+        let finalSources;
+        let finalAnswer = "";
+
+        events.forEach((ev) => {
+          if (ev.type === "step" && ev.label && ev.detail) {
+            finalSteps.push({ label: ev.label, detail: ev.detail });
+          } else if (ev.type === "sources" && ev.sources) {
+            finalSteps.push({ label: ev.label ?? "Reviewing sources", detail: `${ev.sources.length} sources reviewed` });
+            finalSources = ev.sources;
+          } else if (ev.type === "done") {
+            finalAnswer = ev.answer ?? "";
+          }
+        });
+
+        updateMessage(mode, assistantId, { 
+          status: "done", 
+          steps: finalSteps, 
+          sources: finalSources, 
+          answer: finalAnswer 
+        });
+      } catch (err: any) {
+        clearTimeout(wakeTimer);
+        let errorMsg = err.message || "Network failure";
+        if (err.status === 400) {
+          errorMsg = `Invalid research question: ${err.message}`;
+        } else if (err.status === 503) {
+          errorMsg = `Service unavailable (Gemini quota or rate limit): ${err.message}`;
+        }
+        updateMessage(mode, assistantId, { 
+          status: "done", 
+          answer: `🚨 **Error:** ${errorMsg} \n\n[ Retry ] (click to send again)`, 
+        });
+      }
+      return;
     }
 
     const steps: { label: string; detail: string }[] = [];

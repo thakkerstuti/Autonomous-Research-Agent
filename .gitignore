@@ -20,3 +20,8 @@ env/
 # OS and logs
 .DS_Store
 *.log
+
+# Databases and uploads
+*.db
+*.sqlite*
+uploads/
