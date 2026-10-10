@@ -11,6 +11,9 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Create tables if they don't exist yet (e.g. fresh SQLite DB on new deploy)
+    models.Base.metadata.create_all(bind=engine)
+
     # Reset stale processing pages on startup
     from app.database import SessionLocal
     from app.models import PageSummary
