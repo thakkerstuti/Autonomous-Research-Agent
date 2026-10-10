@@ -1,10 +1,9 @@
-import { Suspense } from "react";
-import { ChatView } from "@/components/chat/chat-view";
+import { PaperStudyFlow } from "@/components/paper/paper-study-flow";
 
-export default function PaperStudyModePage() {
+export default function PaperStudyModePage({ searchParams }: { searchParams: { paperId?: string } }) {
   return (
-    <Suspense>
-      <ChatView mode="paper" />
-    </Suspense>
+    <div className="flex h-full w-full items-center justify-center bg-background">
+      <PaperStudyFlow initialPaperId={searchParams.paperId} />
+    </div>
   );
 }

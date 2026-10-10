@@ -7,7 +7,26 @@ from app.database import engine
 from app import models
 from app.papers import router as papers_router
 
-app = FastAPI()
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Reset stale processing pages on startup
+    from app.database import SessionLocal
+    from app.models import PageSummary
+    db = SessionLocal()
+    try:
+        stale = db.query(PageSummary).filter(PageSummary.status == "processing").all()
+        for s in stale:
+            s.status = "pending"
+        db.commit()
+    except Exception as e:
+        print(f"Error resetting stale pages: {e}")
+    finally:
+        db.close()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 app.include_router(papers_router)
 

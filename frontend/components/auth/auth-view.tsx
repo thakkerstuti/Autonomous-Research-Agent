@@ -201,6 +201,7 @@ export function AuthView({ mode }: AuthViewProps) {
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center bg-bg p-4 sm:p-6 lg:p-8 overflow-hidden font-sans text-ink">
+      <div className="absolute top-4 right-4 z-50 rounded bg-yellow-500/20 px-2 py-1 text-xs font-medium text-yellow-500 border border-yellow-500/40">Sample data</div>
       {/* Dynamic Ambient Background Elements */}
       <div className="absolute -top-40 -left-40 h-[500px] w-[500px] rounded-full bg-grad1/10 blur-[130px] pointer-events-none" />
       <div className="absolute top-1/2 -right-40 h-[500px] w-[500px] rounded-full bg-grad2/10 blur-[140px] pointer-events-none" />

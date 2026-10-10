@@ -89,6 +89,13 @@ def get_paper_file(paper_id: str):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path, media_type="application/pdf")
 
+@router.get("/{paper_id}")
+def get_paper(paper_id: str, db: Session = Depends(get_db)):
+    paper = db.query(models.Paper).filter(models.Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    return paper
+
 @router.patch("/{paper_id}")
 def update_paper(paper_id: str, level: str = Form(...), db: Session = Depends(get_db), background_tasks=BackgroundTasks()):
     paper = db.query(models.Paper).filter(models.Paper.id == paper_id).first()
@@ -173,4 +180,46 @@ def regenerate_paper_page(paper_id: str, page_number: int, level: str = "Medium"
     ).first()
     
     if not summary:
-        raise HTTPException(status_code=40
+        raise HTTPException(status_code=404, detail="Summary not found")
+        
+    from app.tasks import generate_single_page_summary
+    doc = generate_single_page_summary(paper_id, page_number, level, db)
+    return doc
+
+import time
+import asyncio
+from fastapi.responses import StreamingResponse
+
+@router.get("/{paper_id}/progress")
+async def get_paper_progress(paper_id: str, db: Session = Depends(get_db)):
+    paper = db.query(models.Paper).filter(models.Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+        
+    level = paper.level
+
+    async def event_generator():
+        while True:
+            # Reopen session just for queries
+            from app.database import SessionLocal
+            local_db = SessionLocal()
+            try:
+                summaries = local_db.query(models.PageSummary).filter(
+                    models.PageSummary.paper_id == paper_id,
+                    models.PageSummary.level == level
+                ).all()
+                total = len(summaries)
+                done = sum(1 for s in summaries if s.status == "ready")
+                failed = sum(1 for s in summaries if s.status == "failed")
+                pending = sum(1 for s in summaries if s.status == "pending")
+                
+                yield f"data: {json.dumps({'done': done, 'total': total, 'failed': failed, 'current_page': done + 1})}\n\n"
+                
+                if total > 0 and (done + failed) == total:
+                    break
+            finally:
+                local_db.close()
+                
+            await asyncio.sleep(2)
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

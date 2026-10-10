@@ -35,7 +35,8 @@ export default function LibraryPage() {
   const all = [...added, ...(papers ?? [])].filter((p) => !removed.includes(p.id));
 
   return (
-    <div className="animate-view-in h-full overflow-y-auto px-10 py-10">
+    <div className="animate-view-in h-full overflow-y-auto px-10 py-10 relative">
+      <div className="absolute top-4 right-4 z-50 rounded bg-yellow-500/20 px-2 py-1 text-xs font-medium text-yellow-500 border border-yellow-500/40">Sample data</div>
       <div className="mb-8 flex items-start justify-between">
         <div>
           <h1 className="font-serif text-2xl font-semibold">Paper Library</h1>

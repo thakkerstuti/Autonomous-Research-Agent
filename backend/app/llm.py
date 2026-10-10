@@ -9,10 +9,61 @@ from app.schemas import ClassificationResult, ResearchPlan
 load_dotenv()
 
 MODEL = "gemini-flash-lite-latest"
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+api_key = os.getenv("GEMINI_API_KEY")
+if api_key:
+    client = genai.Client(api_key=api_key)
+else:
+    client = None
 
 
 def _call_gemini(prompt: str, schema):
+    import os
+    if os.getenv("LLM_MOCK") == "1":
+        # Mock mode
+        import time
+        import random
+        time.sleep(1) # simulate network
+        
+        # Simulate 429
+        if "simulated_429" in prompt:
+            raise HTTPException(status_code=429, detail="Simulated 429")
+            
+        print(f"Mocking _call_gemini for schema {schema.__name__}")
+        if schema.__name__ == "BatchAnalysis":
+            # Extract page numbers from prompt to mock them
+            # Prompt format: ... Analyze PAGE X ...
+            import re
+            pages = []
+            for m in re.finditer(r"--- PAGE (\d+) ---", prompt):
+                p_num = int(m.group(1))
+                pages.append({
+                    "page_number": p_num,
+                    "summary": f"Mock summary for page {p_num}.",
+                    "key_points": ["Mock pt 1", "Mock pt 2"],
+                    "terms": {"MockTerm": "Mock definition"},
+                    "figures": {}
+                })
+            return schema(pages=pages)
+        elif schema.__name__ == "SingleAnalysis":
+            import re
+            m = re.search(r"Analyze PAGE (\d+):", prompt)
+            p_num = int(m.group(1)) if m else 1
+            return schema(pages=[{
+                "page_number": p_num,
+                "summary": f"Mock single summary for page {p_num}.",
+                "key_points": ["Mock pt 1"],
+                "terms": {},
+                "figures": {}
+            }])
+        elif schema.__name__ == "OverviewModel":
+            return schema(overview="Mock paper overview.")
+        elif schema.__name__ == "ResearchPlan":
+            return schema(valid=True, reason="Mock", hypotheses=[])
+        elif schema.__name__ == "ClassificationResult":
+            return schema(items=[], followups=[])
+            
+        return schema(**{})
+
     for attempt in range(2):
         try:
             response = client.models.generate_content(

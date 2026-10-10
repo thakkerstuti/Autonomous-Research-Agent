@@ -23,5 +23,7 @@ env/
 
 # Databases and uploads
 *.db
+*.db-shm
+*.db-wal
 *.sqlite*
 uploads/

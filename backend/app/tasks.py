@@ -200,3 +200,69 @@ If a page is blank, a reference list, or scanned with no text, state that honest
         print(f"Error in job: {e}")
     finally:
         db.close()
+
+def generate_single_page_summary(paper_id: str, page_number: int, level: str, db: Session):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    summary = db.query(PageSummary).filter(
+        PageSummary.paper_id == paper_id,
+        PageSummary.page_number == page_number,
+        PageSummary.level == level
+    ).first()
+    
+    if not summary:
+        return None
+        
+    page = db.query(PaperPage).filter(
+        PaperPage.paper_id == paper_id,
+        PaperPage.page_number == page_number
+    ).first()
+    
+    if not page or not page.text:
+        summary.status = "no_text"
+        summary.summary = "No text found on this page."
+        db.commit()
+        db.refresh(summary)
+        return summary
+        
+    level_instructions = {
+        "Beginner": "Use plain language, define every technical term, and use simple analogies. Do not assume any background knowledge.",
+        "Medium": "Assume basic knowledge of the field. Keep technical terms but provide short explanations. Focus on explaining the 'why' behind methods.",
+        "Pro": "Be concise and highly technical. Focus on the core contribution, methodology, assumptions, limitations, and results. Keep equations and notation intact."
+    }
+    level_instruction = level_instructions.get(level, level_instructions["Medium"])
+    
+    # Try getting previous summary for context
+    prev_summary = ""
+    if page_number > 1:
+        prev = db.query(PageSummary).filter(
+            PageSummary.paper_id == paper_id,
+            PageSummary.page_number == page_number - 1,
+            PageSummary.level == level
+        ).first()
+        if prev and prev.summary:
+            prev_summary = prev.summary
+            
+    single_prompt = f"Level: {level}\nInstructions: {level_instruction}\nContext: {prev_summary}\n\nAnalyze PAGE {page_number}:\n{page.text[:4000]}"
+    
+    try:
+        class SingleAnalysis(BaseModel):
+            pages: list[PageAnalysis]
+        single_res = _call_gemini(single_prompt, SingleAnalysis)
+        sr = single_res.pages[0] if single_res.pages else None
+        if sr:
+            summary.summary = sr.summary
+            summary.key_points = sr.key_points
+            summary.terms = sr.terms
+            summary.figures = sr.figures
+            summary.status = "ready"
+            summary.error = None
+        else:
+            summary.status = "failed"
+            summary.error = "Missing in individual output."
+    except Exception as e:
+        summary.status = "failed"
+        summary.error = f"Individual retry failed: {str(e)}"
+        
+    db.commit()
+    db.refresh(summary)
+    return summary

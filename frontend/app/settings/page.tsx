@@ -40,7 +40,8 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="animate-view-in h-full overflow-y-auto px-10 py-10">
+    <div className="animate-view-in h-full overflow-y-auto px-10 py-10 relative">
+      <div className="absolute top-4 right-4 z-50 rounded bg-yellow-500/20 px-2 py-1 text-xs font-medium text-yellow-500 border border-yellow-500/40">Sample data</div>
       <h1 className="font-serif text-2xl font-semibold">Settings</h1>
       <p className="mb-6 mt-1 max-w-lg text-ink-soft">Account, model preferences, and usage.</p>
 

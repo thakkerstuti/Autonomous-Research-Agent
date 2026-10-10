@@ -1,17 +1,13 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { useUiStore } from "@/lib/store";
-import { useAgentStream } from "@/lib/use-agent-stream";
 import { ChatMessage, Mode } from "@/lib/types";
 import { ChatEmptyState } from "@/components/chat/chat-empty-state";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { ChatInputBar } from "@/components/chat/chat-input-bar";
-import { PdfViewer } from "@/components/paper/pdf-viewer";
-
-const SAMPLE_PDF_URL = "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/basicapi.pdf";
 
 const copy: Record<Mode, { title: string; heading: string; placeholder: string; chips: string[] }> = {
   research: {
@@ -30,46 +26,27 @@ const copy: Record<Mode, { title: string; heading: string; placeholder: string; 
 
 export function ChatView({ mode }: { mode: Mode }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const resumeQuestion = searchParams.get("session") ? "Resumed session" : null;
 
-  const { chatHistories, appendMessage, updateMessage, resetHistory } = useUiStore();
+  const { chatHistories, appendMessage, updateMessage } = useUiStore();
   const messages = chatHistories[mode];
-  const { start } = useAgentStream();
   const bodyRef = useRef<HTMLDivElement>(null);
-  const resumedRef = useRef(false);
 
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  // History/Dashboard "resume" links land here with ?session=<id> — show that
-  // conversation immediately instead of the empty state.
-  useEffect(() => {
-    if (resumeQuestion && !resumedRef.current && messages.length === 0) {
-      resumedRef.current = true;
-      send(resumeQuestion, true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resumeQuestion]);
-
-  async function send(text: string, isResume = false) {
+  async function send(text: string) {
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", text, status: "done" };
     const assistantId = crypto.randomUUID();
     const assistantMsg: ChatMessage = { id: assistantId, role: "assistant", status: "pending" };
 
-    if (isResume) {
-      resetHistory(mode, [userMsg, assistantMsg]);
-    } else {
-      appendMessage(mode, userMsg);
-      appendMessage(mode, assistantMsg);
-    }
+    appendMessage(mode, userMsg);
+    appendMessage(mode, assistantMsg);
 
-    if (mode === "research") {
-      updateMessage(mode, assistantId, { 
-        status: "pending", 
-        steps: [{ label: "Starting", detail: "Initializing connection..." }] 
-      });
+    updateMessage(mode, assistantId, { 
+      status: "pending", 
+      steps: [{ label: "Starting", detail: "Initializing connection..." }] 
+    });
       
       const wakeTimer = setTimeout(() => {
         updateMessage(mode, assistantId, { 
@@ -123,27 +100,6 @@ export function ChatView({ mode }: { mode: Mode }) {
           answer: `🚨 **Error:** ${errorMsg} \n\n[ Retry ] (click to send again)`, 
         });
       }
-      return;
-    }
-
-    const steps: { label: string; detail: string }[] = [];
-
-    start(mode, text, {
-      onEvent: (event) => {
-        if (event.type === "step" && event.label && event.detail) {
-          steps.push({ label: event.label, detail: event.detail });
-          updateMessage(mode, assistantId, { status: "streaming", steps: [...steps] });
-        }
-        if (event.type === "sources" && event.sources) {
-          steps.push({ label: event.label ?? "Reviewing sources", detail: `${event.sources.length} sources reviewed` });
-          updateMessage(mode, assistantId, { status: "streaming", steps: [...steps], sources: event.sources });
-        }
-        if (event.type === "done") {
-          updateMessage(mode, assistantId, { status: "done", answer: event.answer });
-        }
-      },
-      onDone: () => {},
-    });
   }
 
   const c = copy[mode];
@@ -173,12 +129,6 @@ export function ChatView({ mode }: { mode: Mode }) {
             </div>
           )}
         </div>
-
-        {mode === "paper" && messages.some((m) => m.answer) && (
-          <div className="w-[360px] flex-shrink-0 border-l border-line p-4">
-            <PdfViewer fileUrl={SAMPLE_PDF_URL} />
-          </div>
-        )}
       </div>
 
       <ChatInputBar placeholder={c.placeholder} onSend={(text) => send(text)} />
