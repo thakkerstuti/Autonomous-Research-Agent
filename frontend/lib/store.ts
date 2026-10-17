@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { ChatMessage, ModelPreference, Mode, User } from "./types";
 
+export type Theme = "light" | "dark";
+
 const MOCK_DEFAULT_USER: User = {
   id: "usr_1",
   name: "Dr. Alex Morgan",
@@ -17,26 +19,48 @@ interface UiState {
   setModelPreference: (m: ModelPreference) => void;
   activeMode: Mode;
   setActiveMode: (mode: Mode) => void;
+  // Theme
+  theme: Theme;
+  toggleTheme: () => void;
+  setTheme: (t: Theme) => void;
   // User Authentication
   user: User | null;
   isAuthenticated: boolean;
   login: (userData: Partial<User>) => void;
   logout: () => void;
-  // per-mode chat history, kept in memory so switching modes never mixes threads
+  // per-mode chat history
   chatHistories: Record<Mode, ChatMessage[]>;
   appendMessage: (mode: Mode, message: ChatMessage) => void;
   updateMessage: (mode: Mode, id: string, patch: Partial<ChatMessage>) => void;
   resetHistory: (mode: Mode, messages: ChatMessage[]) => void;
 }
 
-export const useUiStore = create<UiState>((set) => ({
+function applyTheme(theme: Theme) {
+  if (typeof document === "undefined") return;
+  if (theme === "dark") {
+    document.documentElement.classList.add("dark");
+  } else {
+    document.documentElement.classList.remove("dark");
+  }
+}
+
+export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   modelPreference: "balanced",
   setModelPreference: (modelPreference) => set({ modelPreference }),
   activeMode: "research",
   setActiveMode: (mode) => set({ activeMode: mode }),
-  
+
+  // Theme — light by default
+  theme: "light",
+  setTheme: (t) => { applyTheme(t); set({ theme: t }); },
+  toggleTheme: () => {
+    const next: Theme = get().theme === "light" ? "dark" : "light";
+    applyTheme(next);
+    set({ theme: next });
+  },
+
   // Auth state
   user: MOCK_DEFAULT_USER,
   isAuthenticated: true,
@@ -47,7 +71,9 @@ export const useUiStore = create<UiState>((set) => ({
       email: userData.email || "user@cognexa.ai",
       role: userData.role || "Academic Researcher",
       institution: userData.institution || "Research Institution",
-      avatar: userData.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(userData.name || "User")}`,
+      avatar:
+        userData.avatar ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(userData.name || "User")}`,
     };
     set({ user: newUser, isAuthenticated: true });
   },
@@ -56,10 +82,7 @@ export const useUiStore = create<UiState>((set) => ({
   chatHistories: { research: [], paper: [] },
   appendMessage: (mode, message) =>
     set((s) => ({
-      chatHistories: {
-        ...s.chatHistories,
-        [mode]: [...s.chatHistories[mode], message],
-      },
+      chatHistories: { ...s.chatHistories, [mode]: [...s.chatHistories[mode], message] },
     })),
   updateMessage: (mode, id, patch) =>
     set((s) => ({
@@ -71,4 +94,3 @@ export const useUiStore = create<UiState>((set) => ({
   resetHistory: (mode, messages) =>
     set((s) => ({ chatHistories: { ...s.chatHistories, [mode]: messages } })),
 }));
-

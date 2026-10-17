@@ -4,8 +4,9 @@ import { Providers } from "./providers";
 import { AppShell } from "@/components/layout/app-shell";
 
 export const metadata: Metadata = {
-  title: "CogNexa — Research & Paper Intelligence",
-  description: "Investigate open questions and study research papers with one traceable AI agent.",
+  title: "CogNexa — Research Canvas",
+  description:
+    "A living research workspace. Investigate open questions and study papers with floating panels, voice, and Cognexa AI.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
