@@ -115,7 +115,11 @@ function markdownToHtml(content: string) {
     .replace(/\n/g, "<br/>");
 }
 
-function buildSpread(items: Omit<Panel, "isNew">[], canvas: { w: number; h: number }, isNew = false): Panel[] {
+function buildSpread(
+  items: Array<Omit<Panel, "isNew" | "x" | "y" | "w" | "h"> & { zIndex: number }>,
+  canvas: { w: number; h: number },
+  isNew = false
+): Panel[] {
   const rects = spreadLayout(items.length, canvas.w, canvas.h);
   return items.map((p, i) => ({
     ...p,
