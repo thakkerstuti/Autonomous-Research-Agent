@@ -88,7 +88,7 @@ def _call_gemini(prompt: str, schema):
                 )
             raise HTTPException(
                 status_code=503,
-                detail="Gemini API error. Please try again later.",
+                detail=f"Gemini API error: {str(e)[:200]}. Please try again later.",
             )
         except HTTPException:
             raise
