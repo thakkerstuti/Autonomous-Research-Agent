@@ -21,6 +21,7 @@ interface UiState {
   setActiveMode: (mode: Mode) => void;
   // Theme
   theme: Theme;
+  initTheme: () => void;
   toggleTheme: () => void;
   setTheme: (t: Theme) => void;
   // User Authentication
@@ -42,6 +43,18 @@ function applyTheme(theme: Theme) {
   } else {
     document.documentElement.classList.remove("dark");
   }
+  try {
+    localStorage.setItem("cognexa-theme", theme);
+  } catch {}
+}
+
+function getStoredTheme(): Theme {
+  if (typeof window === "undefined") return "light";
+  try {
+    const saved = localStorage.getItem("cognexa-theme");
+    if (saved === "dark" || saved === "light") return saved;
+  } catch {}
+  return "light";
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -52,8 +65,13 @@ export const useUiStore = create<UiState>((set, get) => ({
   activeMode: "research",
   setActiveMode: (mode) => set({ activeMode: mode }),
 
-  // Theme — light by default
+  // Theme — light by default with localStorage sync
   theme: "light",
+  initTheme: () => {
+    const t = getStoredTheme();
+    applyTheme(t);
+    set({ theme: t });
+  },
   setTheme: (t) => { applyTheme(t); set({ theme: t }); },
   toggleTheme: () => {
     const next: Theme = get().theme === "light" ? "dark" : "light";

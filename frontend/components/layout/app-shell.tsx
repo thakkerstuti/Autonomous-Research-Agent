@@ -1,10 +1,18 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "./sidebar";
+import { useUiStore } from "@/lib/store";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const initTheme = useUiStore((s) => s.initTheme);
+
+  useEffect(() => {
+    initTheme();
+  }, [initTheme]);
+
   const isAuthPage = pathname === "/login" || pathname === "/signup";
 
   if (isAuthPage) {
