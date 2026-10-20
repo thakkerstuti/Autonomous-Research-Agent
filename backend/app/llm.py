@@ -10,6 +10,8 @@ from app.schemas import ClassificationResult, ResearchPlan
 load_dotenv()
 
 MODEL = "gemini-flash-lite-latest"
+FALLBACK_MODEL = "gemini-2.0-flash"
+MODELS = [MODEL, FALLBACK_MODEL]
 api_key = os.getenv("GEMINI_API_KEY")
 if api_key:
     client = genai.Client(api_key=api_key)
@@ -65,38 +67,41 @@ def _call_gemini(prompt: str, schema):
             
         return schema(**{})
 
-    for attempt in range(2):
-        try:
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=schema,
-                ),
-            )
-            return response.parsed
-        except errors.APIError as e:
-            is_429 = getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e).upper()
-            if is_429 and attempt == 0:
-                time.sleep(2)
-                continue
-            if is_429:
+    last_error = None
+    for model in MODELS:
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=schema,
+                    ),
+                )
+                return response.parsed
+            except errors.APIError as e:
+                last_error = e
+                is_429 = getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e).upper()
+                is_unavailable = getattr(e, "code", None) == 503 or "UNAVAILABLE" in str(e).upper()
+                if (is_429 or is_unavailable) and attempt == 0:
+                    time.sleep(2)
+                    continue
+                if is_429 or is_unavailable:
+                    break  # try fallback model
                 raise HTTPException(
                     status_code=503,
-                    detail="Gemini quota or rate limit exceeded. Please try again later.",
+                    detail=f"Gemini API error: {str(e)[:200]}. Please try again later.",
                 )
-            raise HTTPException(
-                status_code=503,
-                detail=f"Gemini API error: {str(e)[:200]}. Please try again later.",
-            )
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(
-                status_code=503,
-                detail="Error communicating with Gemini API.",
-            )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                last_error = exc
+                break  # try fallback model
+    raise HTTPException(
+        status_code=503,
+        detail=f"All Gemini models unavailable: {str(last_error)[:200]}. Please try again later.",
+    )
 
 
 def create_research_plan(question: str) -> ResearchPlan:
@@ -228,35 +233,42 @@ Instructions:
         report_text = f"# Research Report\n\n## Direct Answer\nMock report for: {question}\n\n## Findings by Hypothesis\nMock findings.\n\n## Limitations\nMock limitations."
         return report_text, [], None
 
-    for attempt in range(2):
-        try:
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="text/plain"),
-            )
-            report_text = ""
+    last_error = None
+    for model in MODELS:
+        for attempt in range(2):
             try:
-                report_text = response.text or ""
-            except Exception:
-                if getattr(response, "candidates", None) and response.candidates:
-                    parts = getattr(response.candidates[0].content, "parts", []) or []
-                    report_text = "".join(getattr(p, "text", "") or "" for p in parts)
-            if not report_text and attempt == 0:
-                time.sleep(2)
-                continue
-            cited = re.findall(r"\[E(\d+)\]", report_text)
-            invalid = sorted({f"E{n}" for n in cited if f"E{n}" not in valid_ids})
-            return report_text, invalid, None
-        except errors.APIError as e:
-            is_429 = getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e).upper()
-            if is_429 and attempt == 0:
-                time.sleep(2)
-                continue
-            return None, [], f"Report generation failed: {str(e)[:120]}"
-        except Exception as exc:
-            if attempt == 0:
-                time.sleep(1)
-                continue
-            return None, [], f"Report generation failed: {str(exc)[:120]}"
-    return None, [], "Report generation failed after retries"
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="text/plain"),
+                )
+                report_text = ""
+                try:
+                    report_text = response.text or ""
+                except Exception:
+                    if getattr(response, "candidates", None) and response.candidates:
+                        parts = getattr(response.candidates[0].content, "parts", []) or []
+                        report_text = "".join(getattr(p, "text", "") or "" for p in parts)
+                if not report_text and attempt == 0:
+                    time.sleep(2)
+                    continue
+                cited = re.findall(r"\[E(\d+)\]", report_text)
+                invalid = sorted({f"E{n}" for n in cited if f"E{n}" not in valid_ids})
+                return report_text, invalid, None
+            except errors.APIError as e:
+                last_error = str(e)[:120]
+                is_429 = getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e).upper()
+                is_unavailable = getattr(e, "code", None) == 503 or "UNAVAILABLE" in str(e).upper()
+                if (is_429 or is_unavailable) and attempt == 0:
+                    time.sleep(2)
+                    continue
+                if is_429 or is_unavailable:
+                    break  # try fallback model
+                return None, [], f"Report generation failed: {last_error}"
+            except Exception as exc:
+                last_error = str(exc)[:120]
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                break  # try fallback model
+    return None, [], f"Report generation failed after retries: {last_error}"
