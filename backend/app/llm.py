@@ -20,10 +20,8 @@ else:
 
 
 def _call_gemini(prompt: str, schema):
-    import os
     if os.getenv("LLM_MOCK") == "1":
         # Mock mode
-        import time
         import random
         time.sleep(1) # simulate network
         
