@@ -22,6 +22,9 @@ interface BackendResearchResponse {
     weight: number;
   }[];
   rounds_used: number;
+  report?: string | null;
+  report_error?: string | null;
+  invalid_citations?: string[];
   stats: {
     gemini_calls: number;
     tavily_calls: number;
@@ -90,24 +93,37 @@ export function adaptResearchResponseToSteps(data: BackendResearchResponse): Age
     sources: sources,
   });
 
-  let answerText = `### Research Results\n\n`;
-  
-  data.hypotheses.forEach((h) => {
-    answerText += `**Hypothesis:** ${h.statement}\n`;
-    answerText += `**Status:** ${h.status.toUpperCase()}\n`;
-    const evs = data.evidence_log.filter((e) => e.hypothesis_id === h.id);
-    if (evs.length > 0) {
-      answerText += `**Evidence:**\n`;
-      evs.forEach((e) => {
-        answerText += `- [${e.stance.toUpperCase()}] ${e.source_title || e.source_url} (${Math.round(e.confidence * 100)}% confidence)\n`;
-      });
-    } else {
-      answerText += `*No direct evidence found.*\n`;
-    }
-    answerText += `\n`;
-  });
+  let answerText = ``;
 
-  answerText += `*Stats: completed in ${data.stats.duration_seconds}s with ${data.stats.gemini_calls} LLM calls and ${data.stats.tavily_calls} searches.*`;
+  // Prefer the polished Gemini-generated report from the backend
+  if (data.report) {
+    answerText = data.report;
+    if (data.report_error) {
+      answerText += `\n\n> ⚠️ ${data.report_error}`;
+    }
+  } else {
+    // Fallback: build answer from raw hypotheses/evidence when report is missing
+    answerText = `### Research Results\n\n`;
+    if (data.report_error) {
+      answerText += `> ⚠️ Report generation failed: ${data.report_error}\n\n`;
+    }
+    data.hypotheses.forEach((h) => {
+      answerText += `**Hypothesis:** ${h.statement}\n`;
+      answerText += `**Status:** ${h.status.toUpperCase()}\n`;
+      const evs = data.evidence_log.filter((e) => e.hypothesis_id === h.id);
+      if (evs.length > 0) {
+        answerText += `**Evidence:**\n`;
+        evs.forEach((e) => {
+          answerText += `- [${e.stance.toUpperCase()}] ${e.source_title || e.source_url} (${Math.round(e.confidence * 100)}% confidence)\n`;
+        });
+      } else {
+        answerText += `*No direct evidence found.*\n`;
+      }
+      answerText += `\n`;
+    });
+  }
+
+  answerText += `\n\n*Stats: completed in ${data.stats.duration_seconds}s with ${data.stats.gemini_calls} LLM calls and ${data.stats.tavily_calls} searches.*`;
 
   steps.push({
     type: "done",

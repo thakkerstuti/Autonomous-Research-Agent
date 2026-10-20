@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState, useRef, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
 import { Search, Sparkles, Lightbulb, Loader2 } from "lucide-react";
 import { FloatingPanel } from "@/components/ui/floating-panel";
 import { ResearchCanvas } from "@/components/ui/research-canvas";
@@ -230,7 +231,9 @@ function ResearchPage() {
                     Gathering evidence…
                   </div>
                 ) : (
-                  <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink-soft">{panel.body}</div>
+                  <div className="prose prose-sm prose-invert max-w-none text-[13px] leading-relaxed text-ink-soft [&_h1]:text-lg [&_h1]:font-semibold [&_h1]:text-ink [&_h1]:mt-2 [&_h1]:mb-3 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-ink [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:text-sm [&_h3]:font-medium [&_h3]:text-ink [&_h3]:mt-3 [&_h3]:mb-1 [&_p]:mb-2 [&_ul]:my-1 [&_ul]:pl-4 [&_li]:mb-1 [&_strong]:text-ink [&_blockquote]:border-l-2 [&_blockquote]:border-rose/50 [&_blockquote]:pl-3 [&_blockquote]:text-ink-faint [&_blockquote]:italic">
+                    <ReactMarkdown>{panel.body}</ReactMarkdown>
+                  </div>
                 )}
               </FloatingPanel>
             ))}
