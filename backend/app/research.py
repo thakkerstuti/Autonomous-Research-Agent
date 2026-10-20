@@ -1,6 +1,7 @@
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse
-from app.llm import classify_and_refine, create_research_plan
+from app.llm import classify_and_refine, create_research_plan, write_report
 from app.search import search_web
 
 MAX_ROUNDS = 3
@@ -34,35 +35,82 @@ def source_weight(url: str) -> float:
     return 0.3
 
 
-def _compute_status(evidence: list[dict]) -> str:
-    non_neutral = [e for e in evidence if e["stance"] in ("supports", "refutes")]
-    if not non_neutral:
+CAUSAL_WORDS = (
+    "cause", "causes", "directly increases", "directly decreases",
+    "primarily", "triggers", "primary mediator", "leads to", "drives",
+)
+PREPRINT_DOMAINS = ("medrxiv.org", "biorxiv.org", "arxiv.org")
+NCBI_DOMAINS = ("pmc.ncbi.nlm.nih.gov", "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov")
+INSTITUTION_SUFFIXES = (".gov", ".edu")
+INSTITUTION_DOMAINS = ("hub.jhu.edu", "clinicaltrials.gov", "nih.gov", "pmc.ncbi.nlm.nih.gov")
+
+
+def _source_type(url: str) -> str:
+    domain = urlparse(url if "://" in url else f"https://{url}").netloc.lower()
+    if any(d in domain for d in PREPRINT_DOMAINS):
+        return "preprint"
+    if any(d in domain for d in NCBI_DOMAINS):
+        return "journal"
+    if any(d in domain for d in INSTITUTION_DOMAINS) or domain.endswith(INSTITUTION_SUFFIXES):
+        return "institution"
+    if any(d in domain for d in HIGH_DOMAINS):
+        return "journal"
+    if any(d in domain for d in MEDIUM_DOMAINS):
+        return "news"
+    return "blog"
+
+
+def _compute_status(evidence: list[dict], statement: str = "") -> str:
+    valid_non_neutral = []
+    for e in evidence:
+        if e.get("stance") not in ("supports", "refutes"):
+            continue
+        quote = (e.get("quote") or "").strip()
+        snippet = e.get("snippet") or ""
+        if not quote:
+            continue
+        norm_q = " ".join(quote.split()).lower()
+        norm_s = " ".join(snippet.split()).lower()
+        if norm_q not in norm_s:
+            continue
+        valid_non_neutral.append(e)
+
+    if not valid_non_neutral:
         return "untested"
-    counted: list[dict] = []
+
     study_groups: dict[tuple[str, str], dict] = {}
-    for e in non_neutral:
-        study = (e.get("study") or "").strip()
+    for e in valid_non_neutral:
+        study = (e.get("study") or "").strip().lower()
         if not study:
-            counted.append(e)
-        else:
-            key = (e.get("hypothesis_id", ""), study.lower())
-            if key not in study_groups or (e["weight"] * e["confidence"]) > (study_groups[key]["weight"] * study_groups[key]["confidence"]):
-                study_groups[key] = e
-    counted.extend(study_groups.values())
+            study = (e.get("source_title") or e.get("source_url") or "").strip().lower()
+        key = (e.get("hypothesis_id", ""), study)
+        if key not in study_groups or (e["weight"] * e["confidence"]) > (study_groups[key]["weight"] * study_groups[key]["confidence"]):
+            study_groups[key] = e
+    counted = list(study_groups.values())
 
     supports = sum(e["weight"] * e["confidence"] for e in counted if e["stance"] == "supports")
     refutes = sum(e["weight"] * e["confidence"] for e in counted if e["stance"] == "refutes")
     if (
         len(counted) < MIN_EVIDENCE
         or (supports + refutes) < MIN_WEIGHTED
-        or not any(e["weight"] >= MIN_TOP_WEIGHT for e in counted)
     ):
         return "insufficient"
     if supports > 2 * refutes:
-        return "supported"
-    if refutes > 2 * supports:
-        return "refuted"
-    return "mixed"
+        status = "supported"
+    elif refutes > 2 * supports:
+        status = "refuted"
+    else:
+        status = "mixed"
+
+    stmt_lower = statement.lower()
+    if (
+        any(w in stmt_lower for w in CAUSAL_WORDS)
+        and not any(e["weight"] >= MIN_TOP_WEIGHT for e in counted)
+        and status in ("supported", "refuted")
+    ):
+        return "insufficient"
+
+    return status
 
 
 def run_research(question: str) -> dict:
@@ -132,31 +180,38 @@ def run_research(question: str) -> dict:
             src = src_map.get(item.source_id)
             if src:
                 stance = item.stance
-                quote = getattr(item, "quote", "") or ""
-                study = getattr(item, "study", "") or ""
+                quote = (getattr(item, "quote", "") or "").strip()
+                study = (getattr(item, "study", "") or "").strip()
+                snippet = src.get("content") or ""
                 if stance != "neutral":
                     norm_q = " ".join(quote.split()).lower()
-                    norm_c = " ".join((src["content"] or "").split()).lower()
-                    if not norm_q or norm_q not in norm_c:
+                    norm_s = " ".join(snippet.split()).lower()
+                    if not quote or not norm_q or norm_q not in norm_s:
                         stance = "neutral"
+                        quote = ""
+                        study = ""
+                else:
+                    quote = ""
+                    study = ""
                 evidence_log.append({
                     "hypothesis_id": src["hypothesis_id"],
                     "round": r,
                     "query": src["query"],
                     "source_url": src["url"],
                     "source_title": src["title"],
-                    "snippet": src["content"][:300],
+                    "snippet": snippet,
                     "stance": stance,
                     "confidence": item.confidence,
                     "quote": quote,
-                    "study": study if stance != "neutral" else "",
+                    "study": study,
                     "weight": source_weight(src["url"]),
                 })
 
         # Step 4: STATUS (pure Python)
         for h in hypotheses:
             h["status"] = _compute_status(
-                [e for e in evidence_log if e["hypothesis_id"] == h["id"]]
+                [e for e in evidence_log if e["hypothesis_id"] == h["id"]],
+                h.get("statement", ""),
             )
 
         # Step 5: Check if refinement is needed for another round
@@ -184,14 +239,37 @@ def run_research(question: str) -> dict:
             break
         pending_queries = next_pending
 
-    return {
+    # Assign evidence IDs, timestamps, and source types after all rounds
+    retrieved_at = datetime.now(timezone.utc).isoformat()
+    for i, ev in enumerate(evidence_log):
+        ev["id"] = f"E{i + 1}"
+        ev["retrieved_at"] = retrieved_at
+        ev["source_type"] = _source_type(ev["source_url"])
+
+    # Recompute hypothesis statuses using only evidence that passes the checks above
+    for h in hypotheses:
+        h["status"] = _compute_status(
+            [e for e in evidence_log if e["hypothesis_id"] == h["id"]],
+            h.get("statement", ""),
+        )
+
+    # Write report (exactly 1 Gemini call)
+    report, invalid_citations, report_error = write_report(question, hypotheses, evidence_log)
+    gemini_calls += 1
+
+    result = {
         "research_question": question,
         "hypotheses": hypotheses,
         "evidence_log": evidence_log,
         "rounds_used": rounds_used,
+        "report": report,
+        "invalid_citations": invalid_citations,
         "stats": {
             "gemini_calls": gemini_calls,
             "tavily_calls": tavily_calls,
             "duration_seconds": round(time.time() - start_time, 2),
         },
     }
+    if report_error:
+        result["report_error"] = report_error
+    return result

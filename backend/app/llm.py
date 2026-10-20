@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from dotenv import load_dotenv
 from fastapi import HTTPException
@@ -144,12 +145,12 @@ Rules:
 2. If the source says the opposite of the hypothesis, the stance is 'refutes'.
 3. If the source is about a related topic but does not test the hypothesis directly, the stance is 'neutral'.
 4. Example: Hypothesis: benefits diminish over time. A source saying benefits persist long term REFUTES it.
-5. For 'supports' or 'refutes', copy ONE exact sentence or phrase from the source text (max 200 chars) into 'quote'. It must appear word for word in the source. If you cannot quote a sentence that directly addresses the hypothesis, the stance MUST be 'neutral'. Methods sections, inclusion criteria, and background text do not count as evidence.
-The text may be an excerpt. If it does not contain a clear finding, use 'neutral'.
-6. If the hypothesis contains a comparison (e.g. 'compared to X'), a population (e.g. 'in adults with Y'), or a condition (e.g. 'independent of Z'), a source may be 'supports' or 'refutes' ONLY if it addresses that comparison, population, or condition. A source that only addresses the general topic is 'neutral'.
-7. Hedged statements ('may', 'might', 'could', 'suggests') that describe mechanisms or proposals are 'neutral'. Only reported study findings count as evidence.
-8. For supports/refutes, put in 'study' a short name for the underlying study or dataset (e.g. 'Lin 2023 Nature remote collaboration'). Sources reporting the same study MUST use the same name.
-9. Surveys of what people feel or report (e.g. '77% say they are more productive') are opinion, not measured outcomes. Mark them 'neutral' for hypotheses about actual output or performance. A finding of 'no difference' or 'similar' refutes a hypothesis that claims an increase or decrease. If the source studies a different condition than the hypothesis (e.g. hybrid vs fully remote), mark it 'neutral'.
+5. For 'supports' or 'refutes', copy ONE exact sentence or phrase from that source's snippet into 'quote'. It must appear word for word in that source's snippet. If you cannot quote a sentence from the snippet that directly addresses the hypothesis, the stance MUST be 'neutral'. Methods sections, inclusion criteria, and background text do not count as evidence. The text may be an excerpt. If it does not contain a clear finding, use 'neutral'.
+6. Only allow a source to be marked 'supports' or 'refutes' when its evidence directly addresses the hypothesis's specific population, comparison (if any), and outcome. If it does not directly address all of these, the stance MUST be 'neutral'. A source that only addresses the general topic or a different population/outcome is 'neutral'.
+7. Do not treat indirect measures, proxy metrics, or intermediate mechanisms as proof of the claimed outcome (e.g. workload savings do not prove teacher retention; reading gains do not prove smaller achievement gaps; cognitive effort or brain activity do not by themselves prove worse writing or critical-thinking skills). If the source only measures an indirect proxy or mechanism rather than the hypothesis's claimed outcome, mark it 'neutral'.
+8. Hedged statements ('may', 'might', 'could', 'suggests') that describe mechanisms or proposals are 'neutral'. Only reported study findings count as evidence.
+9. For supports/refutes, put in 'study' a short name for the underlying study or dataset (e.g. 'Lin 2023 Nature remote collaboration'). Every non-neutral record MUST be tied to one underlying study. Sources reporting the same study MUST use the exact same study name so each underlying study is counted only once.
+10. Surveys of what people feel or report (e.g. '77% say they are more productive') are opinion, not measured outcomes. Mark them 'neutral' for hypotheses about actual output or performance. A finding of 'no difference', 'no effect', 'no significant difference', 'no significant association', 'similar', or 'null effect' refutes a hypothesis that claims an increase, decrease, or causal link. Such null findings directly address the hypothesis and MUST be marked 'refutes', not 'neutral'. If the source studies a different condition than the hypothesis (e.g. hybrid vs fully remote), mark it 'neutral'.
 
 For every source, return:
 - source_id: exact ID
@@ -182,3 +183,80 @@ For every hypothesis whose status is untested, insufficient or mixed, return exa
             f.hypothesis_id = hid
             cleaned_followups.append(f)
     return ClassificationResult(items=cleaned_items, followups=cleaned_followups)
+
+
+def write_report(question: str, hypotheses: list[dict], evidence: list[dict]) -> tuple[str | None, list[str], str | None]:
+    valid_ids = {e["id"] for e in evidence}
+    non_neutral = [e for e in evidence if e["stance"] != "neutral"]
+
+    hyp_text = "\n".join(
+        f"- [{h['id']}] ({h['status']}) {h['statement']}" for h in hypotheses
+    )
+    ev_lines = []
+    for e in non_neutral:
+        ev_lines.append(
+            f"[{e['id']}] hypothesis={e['hypothesis_id']} stance={e['stance']} "
+            f"weight={e['weight']} source_type={e['source_type']} "
+            f"title={e['source_title']!r} study={e['study']!r}\n"
+            f"quote: {e['quote']}"
+        )
+    ev_text = "\n\n".join(ev_lines) or "(no non-neutral evidence)"
+
+    prompt = f"""Research question: {question}
+
+Hypotheses:
+{hyp_text}
+
+Evidence (non-neutral only):
+{ev_text}
+
+Instructions:
+1. Write a research report in Markdown with these sections: Direct Answer (2-4 sentences answering the research question), Findings by Hypothesis (one short subsection per hypothesis: its status, key supporting evidence, key counter-evidence), Limitations.
+2. Every factual sentence must end with citation IDs in square brackets, like [E3] or [E3][E7]. Cite only IDs provided. Never invent an ID.
+3. Use ONLY the provided quotes. Do not use outside knowledge, and do not add statistics that are not in a quote.
+4. In Findings by Hypothesis, copy each hypothesis status EXACTLY from the computed status in the Hypotheses list (e.g. 'supported', 'refuted', 'mixed', 'insufficient', 'untested'). Do NOT add combined or altered labels such as 'Refuted / Mixed' or 'Plausible but not established'.
+5. Do not overstate: if a hypothesis rests on one study, or only on sources with weight below 0.6, say so explicitly. Do not say 'proves' or 'causes' unless the evidence is experimental or longitudinal.
+6. In Limitations, list hypotheses that are insufficient or untested and explain what evidence is missing.
+7. The first sentence of Direct Answer must directly answer the research question (yes / no / association but not causation / unclear), based on the strongest and highest-weight evidence, not the most numerous.
+8. Make report claims no broader or more certain than the cited evidence supports. If the evidence is indirect, observational, correlational, or insufficient, say so plainly in the text explanation. If a hypothesis claims causation but its evidence is only correlational, cross-sectional, or from sources with weight below 0.6, explain in the text that the finding is plausible but not established as causal, without altering the exact computed status label.
+9. Never write 'None provided'. Write 'No counter-evidence was found in the searches run' instead, and state that this does not mean none exists.
+10. Use the exact scope of the evidence: if a quote says 'depressive symptoms', do not write 'clinical depression'. If a source is about young adults or college students, say so explicitly.
+11. Give weight-1.0 counter-evidence at least as much space as the supporting evidence.
+12. Do not treat indirect measures or proxies as proof of the claimed outcome."""
+
+    if os.getenv("LLM_MOCK") == "1":
+        report_text = f"# Research Report\n\n## Direct Answer\nMock report for: {question}\n\n## Findings by Hypothesis\nMock findings.\n\n## Limitations\nMock limitations."
+        return report_text, [], None
+
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="text/plain"),
+            )
+            report_text = ""
+            try:
+                report_text = response.text or ""
+            except Exception:
+                if getattr(response, "candidates", None) and response.candidates:
+                    parts = getattr(response.candidates[0].content, "parts", []) or []
+                    report_text = "".join(getattr(p, "text", "") or "" for p in parts)
+            if not report_text and attempt == 0:
+                time.sleep(2)
+                continue
+            cited = re.findall(r"\[E(\d+)\]", report_text)
+            invalid = sorted({f"E{n}" for n in cited if f"E{n}" not in valid_ids})
+            return report_text, invalid, None
+        except errors.APIError as e:
+            is_429 = getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e).upper()
+            if is_429 and attempt == 0:
+                time.sleep(2)
+                continue
+            return None, [], f"Report generation failed: {str(e)[:120]}"
+        except Exception as exc:
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            return None, [], f"Report generation failed: {str(exc)[:120]}"
+    return None, [], "Report generation failed after retries"
