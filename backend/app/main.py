@@ -71,7 +71,14 @@ def research(request: ResearchRequest):
             detail="Question must be at least 10 characters long.",
         )
 
-    return run_research(question)
+    import traceback
+    try:
+        return run_research(question)
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)[:300]}")
 
 
 @app.get("/search")
