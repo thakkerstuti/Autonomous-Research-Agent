@@ -29,3 +29,24 @@ class HypothesisFollowup(BaseModel):
 class ClassificationResult(BaseModel):
     items: list[SourceClassification] = Field(default_factory=list)
     followups: list[HypothesisFollowup] = Field(default_factory=list)
+
+
+class CritiqueCheck(BaseModel):
+    name: str
+    passed: bool
+    detail: str = ""
+
+
+class CritiqueResult(BaseModel):
+    passed: bool = True
+    status: Literal["passed", "passed_with_revisions", "flagged_issues", "skipped_on_failure"] = "passed"
+    checks: list[CritiqueCheck] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    revised_report: str | None = None
+
+
+class ResearchRequest(BaseModel):
+    question: str
+    output_format: str = "full"
+    session_id: str | None = None
+

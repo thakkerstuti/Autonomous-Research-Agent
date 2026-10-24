@@ -42,3 +42,21 @@ class PageSummary(Base):
     model = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     __table_args__ = (UniqueConstraint('paper_id', 'page_number', 'level', name='uix_paper_page_level'),)
+
+class ResearchSession(Base):
+    __tablename__ = "research_sessions"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, nullable=True)
+    title = Column(String)
+    question = Column(Text)
+    output_format = Column(String, default="full")  # quick, detailed, full
+    status = Column(String, default="ready")        # ready, in_progress, partial, failed
+    hypotheses = Column(JSON, default=list)
+    evidence_log = Column(JSON, default=list)
+    critique = Column(JSON, default=dict)
+    report = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    stats = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
