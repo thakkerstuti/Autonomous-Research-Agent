@@ -12,6 +12,22 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 router = APIRouter(prefix="/papers", tags=["papers"])
 
+@router.get("")
+def list_papers(db: Session = Depends(get_db)):
+    papers = db.query(models.Paper).order_by(models.Paper.created_at.desc()).all()
+    results = []
+    for p in papers:
+        results.append({
+            "id": p.id,
+            "title": p.title,
+            "authors": "Uploaded PDF",
+            "pages": p.page_count or 0,
+            "uploaded": p.created_at.strftime("%b %d, %Y") if p.created_at else "Recently",
+            "status": p.status if p.status in ("ready", "processing", "failed") else "ready",
+        })
+    return results
+
+
 @router.post("")
 def upload_paper(
     background_tasks: BackgroundTasks,
