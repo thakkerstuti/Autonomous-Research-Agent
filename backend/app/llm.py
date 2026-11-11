@@ -19,9 +19,9 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 load_dotenv()
 
-MODEL = "gemini-flash-lite-latest"
-FALLBACK_MODEL = "gemini-2.0-flash"
-MODELS = [MODEL, FALLBACK_MODEL]
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+FALLBACK_MODEL = "gemini-3.1-flash-lite"
+MODELS = [MODEL, FALLBACK_MODEL, "gemini-flash-latest"]
 
 def get_genai_client():
     api_key = os.getenv("GEMINI_API_KEY")
@@ -116,12 +116,8 @@ def _call_gemini(prompt: str, schema):
                 if (is_429 or is_unavailable) and attempt == 0:
                     time.sleep(2)
                     continue
-                if is_429 or is_unavailable:
-                    break  # try fallback model
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Gemini API error: {str(e)[:200]}. Please try again later.",
-                )
+                # Try fallback model in MODELS on any API error (404, 429, 503, etc.)
+                break
             except HTTPException:
                 raise
             except Exception as exc:
@@ -329,9 +325,7 @@ Instructions:
                 if (is_429 or is_unavailable) and attempt == 0:
                     time.sleep(2)
                     continue
-                if is_429 or is_unavailable:
-                    break  # try fallback model
-                return None, [], f"Report generation failed: {last_error}"
+                break  # try fallback model
             except Exception as exc:
                 last_error = str(exc)[:120]
                 if attempt == 0:
