@@ -1,12 +1,13 @@
 "use client";
 
 import { Suspense, useState, useRef, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
-import { Search, Sparkles, Lightbulb, Loader2 } from "lucide-react";
+import { Search, Sparkles, Lightbulb, Loader2, FileText, CheckCircle2 } from "lucide-react";
 import { FloatingPanel } from "@/components/ui/floating-panel";
 import { ResearchCanvas } from "@/components/ui/research-canvas";
 import { useUiStore } from "@/lib/store";
-import { ChatMessage } from "@/lib/types";
+import { ChatMessage, OutputFormat } from "@/lib/types";
 import { spreadLayout } from "@/lib/canvas-layout";
 
 const CHIPS = [
@@ -31,7 +32,61 @@ interface AnswerPanel {
 
 let topZ = 20;
 
-function EmptyState({ onPick }: { onPick: (t: string) => void }) {
+function FormatSelector({
+  value,
+  onChange,
+}: {
+  value: OutputFormat;
+  onChange: (f: OutputFormat) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 rounded-xl border border-line bg-surface/90 p-1 shadow-sm backdrop-blur-sm">
+      <button
+        type="button"
+        onClick={() => onChange("quick")}
+        className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+          value === "quick"
+            ? "bg-rose text-white shadow-sm"
+            : "text-ink-soft hover:text-ink hover:bg-surface2"
+        }`}
+      >
+        Quick answer
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("detailed")}
+        className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+          value === "detailed"
+            ? "bg-rose text-white shadow-sm"
+            : "text-ink-soft hover:text-ink hover:bg-surface2"
+        }`}
+      >
+        Detailed explanation
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("full")}
+        className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+          value === "full"
+            ? "bg-rose text-white shadow-sm"
+            : "text-ink-soft hover:text-ink hover:bg-surface2"
+        }`}
+      >
+        Full report
+      </button>
+    </div>
+  );
+}
+
+function EmptyState({
+  onPick,
+  outputFormat,
+  onFormatChange,
+}: {
+  onPick: (t: string) => void;
+  outputFormat: OutputFormat;
+  onFormatChange: (f: OutputFormat) => void;
+}) {
   return (
     <div className="relative flex h-full flex-col items-center justify-center p-8 text-center">
       <div className="aurora aurora-a" />
@@ -47,6 +102,13 @@ function EmptyState({ onPick }: { onPick: (t: string) => void }) {
         <p className="mx-auto mt-3 max-w-md text-[14px] text-ink-soft">
           Each answer lands as a floating panel. Keep four or five investigations open and compare them by hand.
         </p>
+
+        {/* Output format picker */}
+        <div className="mt-6 flex flex-col items-center gap-1.5">
+          <span className="text-[11px] uppercase tracking-wider text-ink-faint">Report Depth</span>
+          <FormatSelector value={outputFormat} onChange={onFormatChange} />
+        </div>
+
         <div className="mt-8 flex flex-wrap justify-center gap-2">
           {CHIPS.map((chip) => (
             <button
@@ -70,14 +132,62 @@ function EmptyState({ onPick }: { onPick: (t: string) => void }) {
 }
 
 function ResearchPage() {
+  const searchParams = useSearchParams();
+  const sessionId = searchParams.get("session");
+
   const { chatHistories, appendMessage, updateMessage } = useUiStore();
   const messages = chatHistories["research"];
   const [sending, setSending] = useState(false);
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>("full");
   const [panels, setPanels] = useState<AnswerPanel[]>([]);
   const [layoutNonce, setLayoutNonce] = useState(1);
   const [scale, setScale] = useState(1);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+
+  // Reopen existing session if session query parameter is present
+  useEffect(() => {
+    if (!sessionId) return;
+    let active = true;
+
+    async function loadSavedSession() {
+      try {
+        const { apiClient } = await import("@/lib/api");
+        const data = await apiClient<any>(`/research/sessions/${sessionId}`);
+        if (!active || !data) return;
+
+        const { adaptResearchResponseToSteps } = await import("@/lib/adapters");
+        const events = adaptResearchResponseToSteps(data);
+        let answer = "";
+        events.forEach((ev: any) => {
+          if (ev.type === "done") answer = ev.answer ?? "";
+        });
+
+        topZ += 1;
+        const panel: AnswerPanel = {
+          id: data.session_id || sessionId!,
+          title: data.research_question || "Saved Session",
+          subtitle: `Saved session · Format: ${data.output_format || "full"}`,
+          body: answer || data.report || "No report found.",
+          pending: false,
+          x: 60,
+          y: 60,
+          w: 520,
+          h: 460,
+          zIndex: topZ,
+        };
+
+        setPanels([panel]);
+      } catch (err) {
+        console.warn("Could not load saved session:", err);
+      }
+    }
+
+    loadSavedSession();
+    return () => {
+      active = false;
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -109,13 +219,13 @@ function ResearchPage() {
     const pending: AnswerPanel = {
       id: aId,
       title: text.length > 42 ? `${text.slice(0, 42)}…` : text,
-      subtitle: "Investigating…",
+      subtitle: `Investigating (${outputFormat})…`,
       body: "",
       pending: true,
       x: 80,
       y: 80,
-      w: 400,
-      h: 300,
+      w: 480,
+      h: 360,
       zIndex: topZ,
     };
     setPanels((ps) => {
@@ -126,7 +236,10 @@ function ResearchPage() {
 
     try {
       const { apiClient } = await import("@/lib/api");
-      const res = await apiClient<any>("/research", { method: "POST", body: JSON.stringify({ question: text }) });
+      const res = await apiClient<any>("/research", {
+        method: "POST",
+        body: JSON.stringify({ question: text, output_format: outputFormat }),
+      });
       const { adaptResearchResponseToSteps } = await import("@/lib/adapters");
       const events = adaptResearchResponseToSteps(res);
 
@@ -140,8 +253,20 @@ function ResearchPage() {
         else if (ev.type === "done") answer = ev.answer ?? "";
       });
 
+      const critiqueStatus = res.critique?.status || "verified";
       updateMessage("research", aId, { status: "done", steps, sources, answer });
-      setPanels((ps) => ps.map((p) => p.id === aId ? { ...p, pending: false, subtitle: "Research answer", body: answer || "No answer returned." } : p));
+      setPanels((ps) =>
+        ps.map((p) =>
+          p.id === aId
+            ? {
+                ...p,
+                pending: false,
+                subtitle: `Research answer (${outputFormat}) · Critique: ${critiqueStatus}`,
+                body: answer || "No answer returned.",
+              }
+            : p
+        )
+      );
     } catch (err: any) {
       const msg = err.message || "Network failure";
       updateMessage("research", aId, { status: "done", answer: `**Error:** ${msg}` });
@@ -166,6 +291,10 @@ function ResearchPage() {
         </div>
         <span className="text-[14px] font-medium text-ink">Research canvas</span>
         <div className="flex-1" />
+        {/* Output format picker in header */}
+        <div className="mr-3">
+          <FormatSelector value={outputFormat} onChange={setOutputFormat} />
+        </div>
         <span className="text-[11px] uppercase tracking-[0.14em] text-ink-faint">
           {panels.filter((p) => !p.pending).length} answers open
         </span>
@@ -174,7 +303,11 @@ function ResearchPage() {
       <div className="relative min-h-0 flex-1">
         {!hasPanels ? (
           <>
-            <EmptyState onPick={(t) => send(t)} />
+            <EmptyState
+              onPick={(t) => send(t)}
+              outputFormat={outputFormat}
+              onFormatChange={setOutputFormat}
+            />
             <div className="absolute bottom-4 left-1/2 z-50 w-[min(720px,calc(100%-2rem))] -translate-x-1/2">
               <div className="hud-dock flex items-center gap-2 rounded-2xl px-3 py-2">
                 <Sparkles size={14} className="text-rose" />
@@ -232,9 +365,23 @@ function ResearchPage() {
                   </div>
                 ) : (
                   <div className="prose prose-sm prose-invert max-w-none text-[13px] leading-relaxed text-ink-soft [&_h1]:text-lg [&_h1]:font-semibold [&_h1]:text-ink [&_h1]:mt-2 [&_h1]:mb-3 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-ink [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:text-sm [&_h3]:font-medium [&_h3]:text-ink [&_h3]:mt-3 [&_h3]:mb-1 [&_p]:mb-2 [&_ul]:my-1 [&_ul]:pl-4 [&_li]:mb-1 [&_strong]:text-ink [&_blockquote]:border-l-2 [&_blockquote]:border-rose/50 [&_blockquote]:pl-3 [&_blockquote]:text-ink-faint [&_blockquote]:italic">
-                    <ReactMarkdown>{panel.body}</ReactMarkdown>
+                    <ReactMarkdown
+                      components={{
+                        a: ({ node, ...props }) => (
+                          <a
+                            {...props}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-rose font-medium hover:underline inline-flex items-center gap-0.5"
+                          />
+                        ),
+                      }}
+                    >
+                      {panel.body}
+                    </ReactMarkdown>
                   </div>
                 )}
+
               </FloatingPanel>
             ))}
           </ResearchCanvas>

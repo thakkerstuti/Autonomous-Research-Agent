@@ -64,7 +64,19 @@ export default function ReportPage() {
               <div key={c.id} id={c.id} className="flex gap-3 py-3.5">
                 <span className="w-6 text-sm text-ink-faint">[{i + 1}]</span>
                 <div>
-                  <div className="text-sm font-medium">{c.title}</div>
+                  {c.url ? (
+                    <a
+                      href={c.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-medium hover:text-rose hover:underline inline-flex items-center gap-1"
+                    >
+                      {c.title}
+                      <span className="text-xs text-ink-faint">↗</span>
+                    </a>
+                  ) : (
+                    <div className="text-sm font-medium">{c.title}</div>
+                  )}
                   <CardContent className="text-xs">
                     {c.domain} · {c.note}
                   </CardContent>

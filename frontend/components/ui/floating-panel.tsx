@@ -200,6 +200,9 @@ export function FloatingPanel({
 
   const onPanelPointerDown = useCallback(
     (e: React.PointerEvent) => {
+      // Don't interfere with interactive elements (links, buttons) inside panel body
+      const target = e.target as HTMLElement;
+      if (target.closest("a[href]")) return;
       onFocus?.(id);
       pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pointers.current.size === 2) {
@@ -296,7 +299,7 @@ export function FloatingPanel({
         </div>
       </div>
 
-      {!minimized && <div className="panel-body">{children}</div>}
+      {!minimized && <div className="panel-body select-text">{children}</div>}
 
       {!minimized && (
         <>

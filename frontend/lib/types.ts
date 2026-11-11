@@ -1,5 +1,20 @@
 export type Mode = "research" | "paper";
 
+export type OutputFormat = "quick" | "detailed" | "full";
+
+export interface CritiqueCheck {
+  name: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface CritiqueResult {
+  passed: boolean;
+  status: "passed" | "passed_with_revisions" | "flagged_issues" | "skipped_on_failure";
+  checks: CritiqueCheck[];
+  issues: string[];
+}
+
 export interface User {
   id: string;
   name: string;
@@ -64,6 +79,7 @@ export interface ReportCitation {
   title: string;
   domain: string;
   note: string;
+  url?: string;
 }
 
 export interface ResearchReport {
