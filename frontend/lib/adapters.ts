@@ -15,7 +15,17 @@ interface BackendResearchResponse {
       refuting: string[];
       neutral: string[];
       has_contradiction: boolean;
+      conflict_type?: string;
+      is_material_conflict?: boolean;
+      scope_differences?: string[];
+      conflict_explanation?: string | null;
       contradiction_note?: string | null;
+      conflicting_evidence?: {
+        id: string;
+        title: string;
+        url: string;
+        stance: string;
+      }[];
     };
   }[];
   evidence_log: {
@@ -163,8 +173,12 @@ export function adaptResearchResponseToSteps(data: BackendResearchResponse): Age
         ? "Self-critique: Revisions applied"
         : cStatus === "flagged_issues"
         ? "Self-critique: Issues flagged"
+        : cStatus === "incomplete" || cStatus === "skipped_on_failure"
+        ? "Self-critique: Incomplete (Needs review)"
         : "Self-critique completed";
-    const detail = data.critique.issues && data.critique.issues.length > 0
+    const detail = data.critique.needs_review
+      ? "Critique review did not complete or requires verification; marked for review."
+      : data.critique.issues && data.critique.issues.length > 0
       ? `${data.critique.issues.length} audit issue(s) addressed.`
       : "Claims and citations verified against evidence log.";
     steps.push({
@@ -183,9 +197,25 @@ export function adaptResearchResponseToSteps(data: BackendResearchResponse): Age
   // Surface Contradictions callout if detected on any hypothesis
   const contradictoryHyps = data.hypotheses.filter(h => h.evidence_summary?.has_contradiction);
   if (contradictoryHyps.length > 0) {
-    answerText += `> ⚖️ **Conflicting Evidence Alert:** Contradictions detected across ${contradictoryHyps.length} hypothesis(es):\n`;
+    answerText += `> ⚖️ **Conflicting Evidence Alert:** Material contradiction detected across ${contradictoryHyps.length} hypothesis(es):\n`;
     contradictoryHyps.forEach(ch => {
       answerText += `> - **[${ch.id}]** ${ch.statement}: ${ch.evidence_summary?.contradiction_note}\n`;
+      const confEvs = ch.evidence_summary?.conflicting_evidence || [];
+      if (confEvs.length > 0) {
+        const evLinks = confEvs.map(ce => `[**[${ce.id}]**](${buildHighlightedUrl(ce.url)}) (${ce.stance.toUpperCase()})`);
+        answerText += `>   *Conflicting Sources:* ${evLinks.join(", ")}\n`;
+      }
+    });
+    answerText += `\n`;
+  }
+
+  // Surface Scope Nuances if any hypothesis findings differ by scope rather than contradiction
+  const scopeDiffHyps = data.hypotheses.filter(h => !h.evidence_summary?.has_contradiction && h.evidence_summary?.conflict_type === "scope_difference");
+  if (scopeDiffHyps.length > 0) {
+    answerText += `> ℹ️ **Evidence Scope Nuance:** Divergence explained by scope differences in ${scopeDiffHyps.length} hypothesis(es):\n`;
+    scopeDiffHyps.forEach(sh => {
+      const diffs = sh.evidence_summary?.scope_differences?.join("; ") || "Different study populations, outcomes, or timeframes";
+      answerText += `> - **[${sh.id}]** ${sh.statement}: *${diffs}*\n`;
     });
     answerText += `\n`;
   }
@@ -244,7 +274,8 @@ export function adaptResearchResponseToSteps(data: BackendResearchResponse): Age
   if (data.critique) {
     const c = data.critique;
     const cStatusIcon = c.status === "passed" ? "✅" : c.status === "passed_with_revisions" ? "🛠️" : "⚠️";
-    answerText += `\n\n---\n${cStatusIcon} **Self-Critique Audit:** \`${c.status.toUpperCase()}\``;
+    const reviewBadge = c.needs_review ? " [NEEDS REVIEW]" : "";
+    answerText += `\n\n---\n${cStatusIcon} **Self-Critique Audit:** \`${c.status.toUpperCase()}${reviewBadge}\``;
     if (c.checks && c.checks.length > 0) {
       c.checks.forEach(chk => {
         answerText += `\n- ${chk.passed ? "✓" : "✗"} **${chk.name}:** ${chk.detail}`;

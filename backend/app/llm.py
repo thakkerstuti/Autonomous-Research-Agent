@@ -5,13 +5,15 @@ from dotenv import load_dotenv
 from fastapi import HTTPException
 from google import genai
 from google.genai import errors, types
-from app.schemas import ClassificationResult, ResearchPlan, CritiqueResult, CritiqueCheck
+from app.schemas import ClassificationResult, ResearchPlan, CritiqueResult, CritiqueCheck, ConflictReviewResponse
 from pydantic import BaseModel, Field
 
 class LLMCritiqueResponse(BaseModel):
     factual_accuracy_passed: bool = True
     conclusions_grounded_passed: bool = True
+    counter_evidence_represented_passed: bool = True
     unsupported_claims_found: list[str] = Field(default_factory=list)
+    missing_counter_evidence: list[str] = Field(default_factory=list)
     actionable_issues: list[str] = Field(default_factory=list)
     revised_report: str = ""
 
@@ -77,12 +79,59 @@ def _call_gemini(prompt: str, schema):
         elif schema.__name__ == "ClassificationResult":
             return schema(items=[], followups=[])
         elif schema.__name__ == "LLMCritiqueResponse":
+            if "trigger_critique_failure" in prompt:
+                raise RuntimeError("Simulated LLM critique failure for testing")
+            if "trigger_revision_with_bad_id" in prompt:
+                return schema(
+                    factual_accuracy_passed=False,
+                    conclusions_grounded_passed=True,
+                    counter_evidence_represented_passed=True,
+                    unsupported_claims_found=["Causal claim on correlational data."],
+                    missing_counter_evidence=[],
+                    actionable_issues=["Toned down causal claim in revised report."],
+                    revised_report="## Findings\nRevised finding with toned down claim [E1], but introduced hallucination [E999].",
+                )
+            if "trigger_clean_revision" in prompt:
+                return schema(
+                    factual_accuracy_passed=False,
+                    conclusions_grounded_passed=True,
+                    counter_evidence_represented_passed=True,
+                    unsupported_claims_found=["Overstated conclusion."],
+                    missing_counter_evidence=[],
+                    actionable_issues=["Clarified conclusion scope."],
+                    revised_report="## Findings\nRevised finding with moderated conclusion [E1] and cited counter-evidence [E2].",
+                )
             return schema(
                 factual_accuracy_passed=True,
                 conclusions_grounded_passed=True,
+                counter_evidence_represented_passed=True,
                 unsupported_claims_found=[],
+                missing_counter_evidence=[],
                 actionable_issues=[],
                 revised_report="",
+            )
+        elif schema.__name__ == "ConflictReviewResponse":
+            # Check the evidence text (excluding audit instructions)
+            p_lower = prompt.lower()
+            ev_section = p_lower.split("supporting evidence:", 1)[-1] if "supporting evidence:" in p_lower else p_lower
+            if "audit tasks:" in ev_section:
+                ev_section = ev_section.split("audit tasks:", 1)[0]
+
+            scope_terms = ["novice", "junior", "student", "short-term", "subgroup", "different population"]
+            if any(term in ev_section for term in scope_terms):
+                return schema(
+                    is_material_conflict=False,
+                    conflict_type="scope_difference",
+                    scope_differences=["Evaluated populations or timeframes differ between studies."],
+                    explanation="Divergence is explained by differences in study scope, population, or timeframe rather than a direct contradiction.",
+                    resolution="reconciled_by_scope",
+                )
+            return schema(
+                is_material_conflict=True,
+                conflict_type="comparable_conflict",
+                scope_differences=[],
+                explanation="Direct material contradiction between comparable studies testing similar conditions and populations.",
+                resolution="unresolved",
             )
             
         return schema(**{})
@@ -215,6 +264,81 @@ For every hypothesis whose status is untested, insufficient or mixed, return exa
     return ClassificationResult(items=cleaned_items, followups=cleaned_followups)
 
 
+def review_contradiction(
+    statement: str,
+    supporting_evidence: list[dict],
+    refuting_evidence: list[dict],
+) -> ConflictReviewResponse:
+    """
+    Invokes an independent reviewer only when potential conflicting evidence exists
+    for a hypothesis. Compares study/population, outcome, conditions, and timeframe
+    to distinguish a direct material contradiction from evidence that differs in scope.
+    Explains assessment citing evidence IDs (e.g. [E1], [E2]).
+    Never resolves a conflict by confidence alone.
+    """
+    sup_desc = "\n".join(
+        f"[{e['id']}] Study: '{e.get('study') or e.get('source_title')}' | Quote: {e.get('quote')} | Snippet: {e.get('snippet', '')[:250]}"
+        for e in supporting_evidence
+    )
+    ref_desc = "\n".join(
+        f"[{e['id']}] Study: '{e.get('study') or e.get('source_title')}' | Quote: {e.get('quote')} | Snippet: {e.get('snippet', '')[:250]}"
+        for e in refuting_evidence
+    )
+
+    prompt = f"""You are an independent scientific reviewer evaluating conflicting evidence for a research hypothesis.
+
+Hypothesis: {statement}
+
+Supporting Evidence:
+{sup_desc}
+
+Refuting Evidence:
+{ref_desc}
+
+AUDIT TASKS:
+1. Compare study/population, outcome measured, conditions, and timeframe between the supporting and refuting evidence.
+2. Determine if this is:
+   - 'comparable_conflict': True material conflict where studies test comparable populations, outcomes, conditions, and timeframes, but reach opposite findings.
+   - 'scope_difference': Divergence explained by differences in population (e.g. experts vs novices), outcome (e.g. speed vs quality), conditions (e.g. hybrid vs remote), or timeframe (e.g. short-term onboarding vs multi-year).
+3. If it is a comparable conflict, set is_material_conflict=true and resolution='unresolved'. NEVER resolve a conflict by confidence or study weight alone.
+4. If it is a scope difference, set is_material_conflict=false, list the specific scope differences, and explain how the divergence is reconciled.
+5. In 'explanation', cite specific evidence IDs (e.g. [E1], [E2]) to justify your assessment."""
+
+    try:
+        return _call_gemini(prompt, ConflictReviewResponse)
+    except Exception as exc:
+        # Fallback heuristic if LLM call fails
+        sup_text = " ".join((e.get("quote", "") + " " + e.get("snippet", "")).lower() for e in supporting_evidence)
+        ref_text = " ".join((e.get("quote", "") + " " + e.get("snippet", "")).lower() for e in refuting_evidence)
+        scope_diffs = []
+        pop_words = [("senior", "junior"), ("expert", "novice"), ("student", "professional"), ("adult", "child"), ("experienced", "beginner")]
+        for w1, w2 in pop_words:
+            if (w1 in sup_text and w2 in ref_text) or (w2 in sup_text and w1 in ref_text):
+                scope_diffs.append(f"Population difference: {w1} vs {w2}")
+        time_words = [("short-term", "long-term"), ("immediate", "delayed"), ("onboarding", "longitudinal"), ("initial", "sustained")]
+        for w1, w2 in time_words:
+            if (w1 in sup_text and w2 in ref_text) or (w2 in sup_text and w1 in ref_text):
+                scope_diffs.append(f"Timeframe difference: {w1} vs {w2}")
+
+        sup_ids = ", ".join(e["id"] for e in supporting_evidence)
+        ref_ids = ", ".join(e["id"] for e in refuting_evidence)
+        if scope_diffs:
+            return ConflictReviewResponse(
+                is_material_conflict=False,
+                conflict_type="scope_difference",
+                scope_differences=scope_diffs,
+                explanation=f"Divergence between supporting [{sup_ids}] and refuting [{ref_ids}] evidence is explained by scope differences: {'; '.join(scope_diffs)}.",
+                resolution="reconciled_by_scope",
+            )
+        return ConflictReviewResponse(
+            is_material_conflict=True,
+            conflict_type="comparable_conflict",
+            scope_differences=[],
+            explanation=f"Direct material contradiction between comparable studies [{sup_ids}] and [{ref_ids}] testing similar conditions.",
+            resolution="unresolved",
+        )
+
+
 def write_report(
     question: str,
     hypotheses: list[dict],
@@ -224,9 +348,17 @@ def write_report(
     valid_ids = {e["id"] for e in evidence}
     non_neutral = [e for e in evidence if e["stance"] != "neutral"]
 
-    hyp_text = "\n".join(
-        f"- [{h['id']}] ({h['status']}) {h['statement']}" for h in hypotheses
-    )
+    hyp_lines = []
+    for h in hypotheses:
+        c_info = ""
+        es = h.get("evidence_summary") or {}
+        if es.get("has_contradiction"):
+            c_info = f" [CONFLICT: {es.get('contradiction_note')}]"
+        elif es.get("conflict_type") == "scope_difference":
+            diffs = "; ".join(es.get("scope_differences") or [])
+            c_info = f" [SCOPE DIFFERENCE: {diffs}]"
+        hyp_lines.append(f"- [{h['id']}] ({h['status']}) {h['statement']}{c_info}")
+    hyp_text = "\n".join(hyp_lines)
     ev_lines = []
     for e in non_neutral:
         ev_lines.append(
@@ -409,9 +541,10 @@ def critique_report(
 
     # Step C: Factual Claim & Grounding Critique (via LLM with fallback)
     llm_critique_passed = True
+    counter_evidence_passed = True
     revised_from_llm = None
 
-    if os.getenv("LLM_MOCK") != "1" and (client or get_genai_client()) is not None:
+    if os.getenv("LLM_MOCK") == "1" or (client or get_genai_client()) is not None:
         try:
             ev_summary_lines = [
                 f"[{e['id']}] (stance={e['stance']}, weight={e['weight']}): quote='{e['quote']}'"
@@ -434,57 +567,100 @@ Draft Report:
 {clean_report}
 
 AUDIT TASKS:
-1. Verify if factual claims in the report are strictly supported by the cited quotes. Flag any unsupported claims.
-2. Check if conclusions are stronger than the evidence warrants (e.g. claiming causation when evidence is correlational or from low-weight sources, or ignoring contradictory evidence).
-3. If unsupported claims or overstatements are found, provide a revised version of the report in 'revised_report' with unsupported statements toned down or removed, preserving valid citations. If the draft is completely sound, leave 'revised_report' empty.
-4. Provide brief, actionable issue descriptions in 'actionable_issues'. Do NOT expose private chain-of-thought or internal deliberation."""
+1. Verify that factual claims in the report are cited and supported by the cited quotes. Flag any unsupported or uncited claims.
+2. Check that conclusions match evidence strength (e.g. claiming causation when evidence is correlational or from low-weight sources, or ignoring contradictory evidence).
+3. Verify that important counter-evidence is represented. If refuting or null evidence exists in the evidence log, the report MUST mention and synthesize it, not ignore or hide it.
+4. If unsupported claims, overstatements, or missing counter-evidence are found, provide a revised version of the report in 'revised_report' that addresses these issues while preserving valid citations. If the draft is completely sound, leave 'revised_report' empty.
+5. Provide brief, actionable issue descriptions in 'actionable_issues'. Do NOT expose private chain-of-thought or internal deliberation."""
 
             critique_res: LLMCritiqueResponse = _call_gemini(critique_prompt, LLMCritiqueResponse)
             if not critique_res.factual_accuracy_passed or not critique_res.conclusions_grounded_passed:
                 llm_critique_passed = False
+            if not critique_res.counter_evidence_represented_passed:
+                counter_evidence_passed = False
+                issues.append("Important counter-evidence was omitted or under-represented in draft report.")
+
             for iss in critique_res.actionable_issues:
                 if iss and iss not in issues:
                     issues.append(iss)
             for unsup in critique_res.unsupported_claims_found:
                 if unsup and unsup not in issues:
                     issues.append(f"Unsupported claim: {unsup}")
+            for missing_ce in critique_res.missing_counter_evidence:
+                if missing_ce and missing_ce not in issues:
+                    issues.append(f"Missing counter-evidence: {missing_ce}")
 
-            if critique_res.revised_report and len(critique_res.revised_report.strip()) > 50:
+            if critique_res.revised_report and len(critique_res.revised_report.strip()) > 30:
                 revised_from_llm = critique_res.revised_report.strip()
         except Exception as exc:
-            # Graceful partial failure handling: do not block report if LLM critique call fails
+            # When the LLM critique fails, mark status as incomplete/skipped and flag needing review.
+            # Never report a pass when the review did not run.
             checks.append({
                 "name": "claim_grounding",
-                "passed": True,
-                "detail": f"Deterministic checks passed; LLM audit fallback ({str(exc)[:60]})."
+                "passed": False,
+                "detail": f"LLM claim & grounding review did not complete ({str(exc)[:60]})."
             })
-            # Still proceed safely
-            overall_status = "passed_with_revisions" if invalid_citations else "passed"
+            checks.append({
+                "name": "counter_evidence_representation",
+                "passed": False,
+                "detail": "Counter-evidence review could not run due to critique failure."
+            })
+            issues.append(f"Critique review could not execute ({str(exc)[:60]}); report marked as needing review.")
             return clean_report, {
-                "passed": True,
-                "status": overall_status,
+                "passed": False,
+                "status": "incomplete",
                 "checks": checks,
                 "issues": issues,
+                "needs_review": True,
             }
 
-    # Add claim grounding check result
+    # Add claim grounding and counter-evidence check results
     checks.append({
         "name": "claim_grounding",
         "passed": llm_critique_passed,
         "detail": "Claims and conclusions strictly aligned with evidence strength." if llm_critique_passed else "Flagged claims that exceeded evidence strength."
     })
+    checks.append({
+        "name": "counter_evidence_representation",
+        "passed": counter_evidence_passed,
+        "detail": "Important counter-evidence represented in findings." if counter_evidence_passed else "Important counter-evidence omitted or downplayed."
+    })
 
     final_report = clean_report
     has_revisions = bool(invalid_citations)
+
+    # Revalidate citations after any report revision (Priority: Revalidate citations after any report revision)
     if revised_from_llm:
+        rev_cited_raw = re.findall(r"\[E(\d+)\]", revised_from_llm)
+        rev_cited_ids = [f"E{n}" for n in rev_cited_raw]
+        rev_invalid_citations = sorted({cid for cid in rev_cited_ids if cid not in valid_ids})
+
+        if rev_invalid_citations:
+            for bad_id in rev_invalid_citations:
+                revised_from_llm = re.sub(rf"\[{bad_id}\]", "", revised_from_llm)
+            issues.append(f"Removed non-existent citation ID(s) introduced during revision: {', '.join(rev_invalid_citations)}.")
+            checks.append({
+                "name": "post_revision_citation_validation",
+                "passed": False,
+                "detail": f"Flagged and removed {len(rev_invalid_citations)} invalid citation ID(s) introduced in revision: {', '.join(rev_invalid_citations)}."
+            })
+        else:
+            checks.append({
+                "name": "post_revision_citation_validation",
+                "passed": True,
+                "detail": f"All {len(set(rev_cited_ids))} citations in revised report verified against evidence log."
+            })
+
         final_report = revised_from_llm
         has_revisions = True
 
-    overall_passed = len(issues) == 0 or has_revisions
-    if len(issues) == 0:
-        critique_status = "passed"
-    elif has_revisions:
+    overall_passed = (len(issues) == 0 or has_revisions) and llm_critique_passed and counter_evidence_passed
+    if has_revisions:
         critique_status = "passed_with_revisions"
+    elif not llm_critique_passed or not counter_evidence_passed:
+        critique_status = "flagged_issues"
+    elif len(issues) == 0:
+        critique_status = "passed"
     else:
         critique_status = "flagged_issues"
 
@@ -493,6 +669,7 @@ AUDIT TASKS:
         "status": critique_status,
         "checks": checks,
         "issues": issues,
+        "needs_review": not overall_passed,
     }
 
     return final_report, critique_outcome

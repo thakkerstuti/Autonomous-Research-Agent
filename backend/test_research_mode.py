@@ -9,8 +9,9 @@ os.environ["DATABASE_URL"] = "sqlite:///backend/cognexa.db"
 from app.main import app
 from app.database import SessionLocal, engine
 from app import models
-from app.research import run_research, _verify_source_content, _compute_status
-from app.llm import critique_report, write_report
+from app.research import run_research, _verify_source_content, _compute_status, deduplicate_evidence_by_study
+from app.llm import critique_report, write_report, review_contradiction
+from app.schemas import ConflictReviewResponse
 
 
 class TestResearchMode(unittest.TestCase):
@@ -201,6 +202,220 @@ class TestResearchMode(unittest.TestCase):
         self.assertIn("status", res)
         self.assertIn("critique", res)
         self.assertTrue(res.get("session_id"))
+
+    def test_comparable_vs_scope_different_conflicts(self):
+        """Test distinguishing comparable conflicting evidence from evidence that differs in scope."""
+        # 1. Scope-different conflict: Junior vs Senior developers
+        sup_scope = [
+            {
+                "id": "E1",
+                "hypothesis_id": "H1",
+                "study": "Peng et al., 2023",
+                "source_title": "AI Assistant Productivity",
+                "source_url": "https://arxiv.org/abs/2302.06590",
+                "stance": "supports",
+                "quote": "Junior developers and novices completed tasks 30% faster with AI assistance",
+                "snippet": "Our evaluation found junior developers and novices completed tasks 30% faster with AI assistance.",
+                "weight": 1.0,
+                "confidence": 0.9,
+            }
+        ]
+        ref_scope = [
+            {
+                "id": "E2",
+                "hypothesis_id": "H1",
+                "study": "Barke et al., 2023",
+                "source_title": "Grounded Copilot Study",
+                "source_url": "https://doi.org/10.1145/3586030",
+                "stance": "refutes",
+                "quote": "Senior staff and experienced developers showed no significant speedup",
+                "snippet": "In contrast, senior staff and experienced developers showed no significant speedup on complex refactoring.",
+                "weight": 1.0,
+                "confidence": 0.9,
+            }
+        ]
+        review_scope = review_contradiction(
+            statement="AI assistants improve developer productivity",
+            supporting_evidence=sup_scope,
+            refuting_evidence=ref_scope,
+        )
+        self.assertFalse(review_scope.is_material_conflict)
+        self.assertEqual(review_scope.conflict_type, "scope_difference")
+        self.assertEqual(review_scope.resolution, "reconciled_by_scope")
+
+        # 2. Comparable conflict: Same population, conditions, and timeframe
+        sup_comp = [
+            {
+                "id": "E1",
+                "hypothesis_id": "H1",
+                "study": "Trial Alpha 2023",
+                "source_title": "Controlled Copilot Trial",
+                "source_url": "https://doi.org/10.1145/alpha",
+                "stance": "supports",
+                "quote": "Full-time professional software engineers completed tasks 25 percent faster",
+                "snippet": "Full-time professional software engineers completed tasks 25 percent faster in trial.",
+                "weight": 1.0,
+                "confidence": 0.95,
+            }
+        ]
+        ref_comp = [
+            {
+                "id": "E2",
+                "hypothesis_id": "H1",
+                "study": "Trial Beta 2023",
+                "source_title": "Replication Trial",
+                "source_url": "https://doi.org/10.1145/beta",
+                "stance": "refutes",
+                "quote": "Full-time professional software engineers showed zero productivity gain",
+                "snippet": "Full-time professional software engineers showed zero productivity gain across identical tasks.",
+                "weight": 1.0,
+                "confidence": 0.6,
+            }
+        ]
+        review_comp = review_contradiction(
+            statement="AI assistants improve developer productivity",
+            supporting_evidence=sup_comp,
+            refuting_evidence=ref_comp,
+        )
+        self.assertTrue(review_comp.is_material_conflict)
+        self.assertEqual(review_comp.conflict_type, "comparable_conflict")
+        self.assertEqual(review_comp.resolution, "unresolved")
+
+        # Status must remain "mixed" for unresolved material conflict even if supporting has higher confidence/weight
+        status_unresolved = _compute_status(sup_comp + ref_comp, "AI assistants improve developer productivity", conflict_review=review_comp)
+        self.assertEqual(status_unresolved, "mixed")
+
+    def test_duplicate_studies_deduplication(self):
+        """Test deduplicating multiple evidence items derived from the same underlying study."""
+        evidence = [
+            {
+                "id": "E1",
+                "hypothesis_id": "H1",
+                "study": "Bloom et al. 2015",
+                "source_title": "Bloom QJE",
+                "source_url": "https://doi.org/10.1093/qje/qju032",
+                "stance": "supports",
+                "quote": "Performance increased by 13 percent",
+                "snippet": "Performance increased by 13 percent over the nine months of the study.",
+                "weight": 1.0,
+                "confidence": 0.8,
+            },
+            {
+                "id": "E2",
+                "hypothesis_id": "H1",
+                "study": "Bloom et al. 2015",
+                "source_title": "Bloom QJE",
+                "source_url": "https://doi.org/10.1093/qje/qju032",
+                "stance": "supports",
+                "quote": "Call volume rose significantly",
+                "snippet": "Call volume rose significantly for workers working from home.",
+                "weight": 1.0,
+                "confidence": 0.95,
+            },
+            {
+                "id": "E3",
+                "hypothesis_id": "H1",
+                "study": "Bloom et al. 2015",
+                "source_title": "Bloom QJE",
+                "source_url": "https://doi.org/10.1093/qje/qju032",
+                "stance": "supports",
+                "quote": "Worker attrition dropped by 50 percent",
+                "snippet": "Worker attrition dropped by 50 percent during remote work trial.",
+                "weight": 1.0,
+                "confidence": 0.7,
+            },
+            {
+                "id": "E4",
+                "hypothesis_id": "H1",
+                "study": "Yang et al. Nature 2021",
+                "source_title": "Microsoft Remote Work",
+                "source_url": "https://nature.com/articles/s41562-021-01196-4",
+                "stance": "refutes",
+                "quote": "Firm-wide collaboration network became more siloed",
+                "snippet": "Firm-wide collaboration network became more siloed and communication fell.",
+                "weight": 1.0,
+                "confidence": 0.9,
+            },
+        ]
+        deduped = deduplicate_evidence_by_study(evidence)
+        # 3 supporting quotes from Bloom 2015 should collapse into 1 representative item (E2 with confidence 0.95)
+        self.assertEqual(len(deduped), 2)
+        bloom_rep = [e for e in deduped if "bloom" in e["study"].lower()][0]
+        self.assertEqual(bloom_rep["id"], "E2")
+        self.assertEqual(bloom_rep["confidence"], 0.95)
+
+        # Status computation should not count Bloom 3 times (0.8+0.95+0.7 = 2.45),
+        # but only once (0.95 vs 0.90), remaining "mixed"
+        status = _compute_status(evidence, "Remote work improves team productivity")
+        self.assertEqual(status, "mixed")
+
+    def test_invalid_citations_after_revision(self):
+        """Test revalidating citations after LLM revision and catching non-existent IDs."""
+        evidence = [
+            {
+                "id": "E1",
+                "hypothesis_id": "H1",
+                "stance": "supports",
+                "weight": 1.0,
+                "confidence": 0.9,
+                "quote": "Productivity gains were measured in trial",
+                "snippet": "Productivity gains were measured in trial across teams.",
+                "source_title": "Trial 1",
+                "source_url": "https://example.com/1",
+            }
+        ]
+        hypotheses = [{"id": "H1", "statement": "Productivity increases", "status": "supported"}]
+        draft = "Productivity increases directly [E1]."
+
+        # Trigger mock revision introducing invalid citation [E999]
+        cleaned_report, critique = critique_report(
+            question="trigger_revision_with_bad_id",
+            hypotheses=hypotheses,
+            evidence=evidence,
+            report_text=draft,
+        )
+
+        # Hallucinated ID [E999] must be removed from final report
+        self.assertNotIn("[E999]", cleaned_report)
+        self.assertIn("[E1]", cleaned_report)
+
+        # Post-revision validation check must flag failure
+        post_rev_check = [c for c in critique["checks"] if c["name"] == "post_revision_citation_validation"]
+        self.assertTrue(len(post_rev_check) > 0)
+        self.assertFalse(post_rev_check[0]["passed"])
+        self.assertTrue(any("E999" in iss for iss in critique["issues"]))
+
+    def test_critique_failure_status(self):
+        """Test that LLM critique failure returns status incomplete and marks report as needing review."""
+        evidence = [
+            {
+                "id": "E1",
+                "hypothesis_id": "H1",
+                "stance": "supports",
+                "weight": 1.0,
+                "confidence": 0.9,
+                "quote": "Productivity gains were measured",
+                "snippet": "Productivity gains were measured in trial.",
+                "source_title": "Trial 1",
+                "source_url": "https://example.com/1",
+            }
+        ]
+        hypotheses = [{"id": "H1", "statement": "Productivity increases", "status": "supported"}]
+        draft = "Productivity increases directly [E1]."
+
+        # Trigger mock LLM exception
+        cleaned_report, critique = critique_report(
+            question="trigger_critique_failure",
+            hypotheses=hypotheses,
+            evidence=evidence,
+            report_text=draft,
+        )
+
+        # Status must be incomplete/skipped, never report a pass
+        self.assertFalse(critique["passed"])
+        self.assertEqual(critique["status"], "incomplete")
+        self.assertTrue(critique.get("needs_review"))
+        self.assertTrue(any("could not execute" in iss for iss in critique["issues"]))
 
 
 if __name__ == "__main__":

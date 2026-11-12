@@ -10,9 +10,10 @@ export interface CritiqueCheck {
 
 export interface CritiqueResult {
   passed: boolean;
-  status: "passed" | "passed_with_revisions" | "flagged_issues" | "skipped_on_failure";
+  status: "passed" | "passed_with_revisions" | "flagged_issues" | "skipped_on_failure" | "incomplete";
   checks: CritiqueCheck[];
   issues: string[];
+  needs_review?: boolean;
 }
 
 export interface User {

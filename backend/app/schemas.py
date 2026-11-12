@@ -39,10 +39,19 @@ class CritiqueCheck(BaseModel):
 
 class CritiqueResult(BaseModel):
     passed: bool = True
-    status: Literal["passed", "passed_with_revisions", "flagged_issues", "skipped_on_failure"] = "passed"
+    status: Literal["passed", "passed_with_revisions", "flagged_issues", "skipped_on_failure", "incomplete"] = "passed"
     checks: list[CritiqueCheck] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     revised_report: str | None = None
+    needs_review: bool = False
+
+
+class ConflictReviewResponse(BaseModel):
+    is_material_conflict: bool
+    conflict_type: Literal["comparable_conflict", "scope_difference", "no_conflict"]
+    scope_differences: list[str] = Field(default_factory=list)
+    explanation: str = Field(description="Assessment of evidence conflict citing specific IDs like [E1], [E2]")
+    resolution: Literal["unresolved", "reconciled_by_scope", "no_conflict"] = "unresolved"
 
 
 class ResearchRequest(BaseModel):

@@ -2,7 +2,8 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 import httpx
-from app.llm import classify_and_refine, create_research_plan, write_report, critique_report
+from app.llm import classify_and_refine, create_research_plan, write_report, critique_report, review_contradiction
+from app.schemas import ConflictReviewResponse
 from app.search import search_web
 from app.models import ResearchSession
 from app.database import SessionLocal
@@ -110,7 +111,35 @@ def _verify_source_content(url: str, quote: str) -> tuple[str, str]:
 
 
 
-def _compute_status(evidence: list[dict], statement: str = "") -> str:
+def deduplicate_evidence_by_study(evidence: list[dict]) -> list[dict]:
+    """
+    Deduplicates evidence from the same underlying study for each hypothesis and stance.
+    For items sharing the same study and stance, selects the item with the highest
+    effective quality (weight * confidence), preventing duplicate study counts.
+    """
+    deduped: dict[tuple[str, str, str], dict] = {}
+    for e in evidence:
+        h_id = e.get("hypothesis_id", "")
+        stance = e.get("stance", "neutral")
+        study = (e.get("study") or "").strip().lower()
+        if not study:
+            study = (e.get("source_title") or e.get("source_url") or "").strip().lower()
+        key = (h_id, study, stance)
+        score = float(e.get("weight", 0.0) or 0.0) * float(e.get("confidence", 0.0) or 0.0)
+        if key not in deduped:
+            deduped[key] = e
+        else:
+            prev_score = float(deduped[key].get("weight", 0.0) or 0.0) * float(deduped[key].get("confidence", 0.0) or 0.0)
+            if score > prev_score:
+                deduped[key] = e
+    return list(deduped.values())
+
+
+def _compute_status(
+    evidence: list[dict],
+    statement: str = "",
+    conflict_review: ConflictReviewResponse | None = None,
+) -> str:
     valid_non_neutral = []
     for e in evidence:
         if e.get("stance") not in ("supports", "refutes"):
@@ -128,15 +157,8 @@ def _compute_status(evidence: list[dict], statement: str = "") -> str:
     if not valid_non_neutral:
         return "untested"
 
-    study_groups: dict[tuple[str, str], dict] = {}
-    for e in valid_non_neutral:
-        study = (e.get("study") or "").strip().lower()
-        if not study:
-            study = (e.get("source_title") or e.get("source_url") or "").strip().lower()
-        key = (e.get("hypothesis_id", ""), study)
-        if key not in study_groups or (e["weight"] * e["confidence"]) > (study_groups[key]["weight"] * study_groups[key]["confidence"]):
-            study_groups[key] = e
-    counted = list(study_groups.values())
+    # Deduplicate items from the same underlying study
+    counted = deduplicate_evidence_by_study(valid_non_neutral)
 
     supports = sum(e["weight"] * e["confidence"] for e in counted if e["stance"] == "supports")
     refutes = sum(e["weight"] * e["confidence"] for e in counted if e["stance"] == "refutes")
@@ -145,6 +167,12 @@ def _compute_status(evidence: list[dict], statement: str = "") -> str:
         or (supports + refutes) < MIN_WEIGHTED
     ):
         return "insufficient"
+
+    # If an independent reviewer identified an unresolved material conflict,
+    # keep status mixed/uncertain. Never resolve a material conflict by confidence alone.
+    if conflict_review and conflict_review.is_material_conflict and conflict_review.resolution == "unresolved":
+        return "mixed"
+
     if supports > 2 * refutes:
         status = "supported"
     elif refutes > 2 * supports:
@@ -320,26 +348,74 @@ def run_research(
         ev["verification_status"] = v_status
         ev["verification_detail"] = v_detail
 
-    # Recompute hypothesis statuses and make contradiction handling visible (Priority 3)
+    # Recompute hypothesis statuses and evaluate contradictions (Priority 3)
     for h in hypotheses:
-        h["status"] = _compute_status(
-            [e for e in evidence_log if e["hypothesis_id"] == h["id"]],
-            h.get("statement", ""),
-        )
         h_evs = [e for e in evidence_log if e["hypothesis_id"] == h["id"]]
-        supporting = [e["id"] for e in h_evs if e["stance"] == "supports"]
-        refuting = [e["id"] for e in h_evs if e["stance"] == "refutes"]
-        neutral = [e["id"] for e in h_evs if e["stance"] == "neutral"]
-        has_contradiction = bool(supporting and refuting)
+        valid_h_evs = [
+            e for e in h_evs
+            if e.get("quote") and " ".join((e.get("quote") or "").split()).lower() in " ".join((e.get("snippet") or "").split()).lower()
+        ]
+        sup_evs = [e for e in valid_h_evs if e["stance"] == "supports"]
+        ref_evs = [e for e in valid_h_evs if e["stance"] == "refutes"]
+        neutral_ids = [e["id"] for e in h_evs if e["stance"] == "neutral"]
+
+        # Deduplicate evidence from the same underlying study
+        sup_deduped = deduplicate_evidence_by_study(sup_evs)
+        ref_deduped = deduplicate_evidence_by_study(ref_evs)
+
+        supporting_ids = [e["id"] for e in sup_evs]
+        refuting_ids = [e["id"] for e in ref_evs]
+
+        # Only invoke independent reviewer when material conflict may exist (both supporting & refuting evidence present)
+        conflict_review = None
+        has_contradiction = False
+        contradiction_note = None
+        conflicting_evidence_list = []
+
+        if sup_deduped and ref_deduped:
+            try:
+                conflict_review = review_contradiction(
+                    h["statement"],
+                    sup_deduped,
+                    ref_deduped,
+                )
+                gemini_calls += 1
+            except Exception as rev_err:
+                partial_errors.append(f"Conflict reviewer fallback for {h['id']}: {str(rev_err)[:80]}")
+
+            if conflict_review and conflict_review.is_material_conflict:
+                has_contradiction = True
+                s_ids = ", ".join(e["id"] for e in sup_deduped)
+                r_ids = ", ".join(e["id"] for e in ref_deduped)
+                contradiction_note = (
+                    f"Unresolved material contradiction between supporting [{s_ids}] and refuting [{r_ids}] evidence: "
+                    f"{conflict_review.explanation}"
+                )
+                for ev in (sup_deduped + ref_deduped):
+                    conflicting_evidence_list.append({
+                        "id": ev["id"],
+                        "title": ev.get("source_title") or ev["source_url"],
+                        "url": ev["source_url"],
+                        "stance": ev["stance"],
+                    })
+            elif conflict_review and conflict_review.conflict_type == "scope_difference":
+                has_contradiction = False
+                contradiction_note = None
+
+        # Compute status with conflict review (unresolved material conflicts remain mixed/uncertain; never resolve by confidence alone)
+        h["status"] = _compute_status(h_evs, h.get("statement", ""), conflict_review=conflict_review)
+
         h["evidence_summary"] = {
-            "supporting": supporting,
-            "refuting": refuting,
-            "neutral": neutral,
+            "supporting": supporting_ids,
+            "refuting": refuting_ids,
+            "neutral": neutral_ids,
             "has_contradiction": has_contradiction,
-            "contradiction_note": (
-                f"Conflicting evidence detected: {len(supporting)} supporting ({', '.join(supporting)}) vs {len(refuting)} refuting ({', '.join(refuting)})"
-                if has_contradiction else None
-            ),
+            "conflict_type": conflict_review.conflict_type if conflict_review else "no_conflict",
+            "is_material_conflict": conflict_review.is_material_conflict if conflict_review else False,
+            "scope_differences": conflict_review.scope_differences if conflict_review else [],
+            "conflict_explanation": conflict_review.explanation if conflict_review else None,
+            "contradiction_note": contradiction_note,
+            "conflicting_evidence": conflicting_evidence_list,
         }
 
     # Write report with requested format (Priority 4)
@@ -369,13 +445,25 @@ def run_research(
     except Exception as crit_err:
         critique_outcome = {
             "passed": False,
-            "status": "skipped_on_failure",
-            "checks": [],
-            "issues": [f"Critique step could not execute: {str(crit_err)[:120]}"],
+            "status": "incomplete",
+            "checks": [
+                {
+                    "name": "critique_execution",
+                    "passed": False,
+                    "detail": f"Critique step could not execute: {str(crit_err)[:100]}",
+                }
+            ],
+            "issues": [f"Critique review could not execute ({str(crit_err)[:100]}); report marked as needing review."],
+            "needs_review": True,
         }
         partial_errors.append(f"Critique error: {str(crit_err)[:100]}")
 
-    result_status = "ready" if not partial_errors else "partial"
+    if critique_outcome.get("needs_review"):
+        result_status = "review"
+    elif partial_errors:
+        result_status = "partial"
+    else:
+        result_status = "ready"
     duration = round(time.time() - start_time, 2)
     stats_dict = {
         "gemini_calls": gemini_calls,
