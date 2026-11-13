@@ -31,8 +31,8 @@ export function PaperStudyFlow({ initialPaperId }: { initialPaperId?: string }) 
       setErrorMsg("Must be a PDF file.");
       return;
     }
-    if (selected.size > 20 * 1024 * 1024) {
-      setErrorMsg("File size exceeds 20MB limit.");
+    if (selected.size > 100 * 1024 * 1024) {
+      setErrorMsg("File size exceeds 100MB limit.");
       return;
     }
 
@@ -91,7 +91,7 @@ export function PaperStudyFlow({ initialPaperId }: { initialPaperId?: string }) 
             </div>
             <div>
               <span className="font-medium text-ink block">Click or Drag & Drop PDF</span>
-              <span className="text-sm text-ink-faint">Max 20MB, up to 100 pages</span>
+              <span className="text-sm text-ink-faint">Max 100MB</span>
             </div>
           </button>
           

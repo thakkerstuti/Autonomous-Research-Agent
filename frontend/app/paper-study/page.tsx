@@ -563,7 +563,6 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
 
   const handleFile = (f: File, pages: number) => {
     setError(null);
-    if (pages > 100) { setError(`Exceeds 100 page limit (${pages} pages).`); return; }
     setFile(f);
     setPageCount(pages);
     if (f.size === 0) { setPaperId("demo"); setStep("processing"); }

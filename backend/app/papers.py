@@ -41,8 +41,8 @@ def upload_paper(
     if not file_bytes.startswith(b'%PDF'):
         raise HTTPException(status_code=400, detail="Invalid file format. Must be a PDF.")
         
-    if len(file_bytes) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File size exceeds limit (20MB).")
+    if len(file_bytes) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File size exceeds limit (100MB).")
         
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -50,9 +50,7 @@ def upload_paper(
         raise HTTPException(status_code=400, detail="Invalid or corrupt PDF file.")
         
     page_count = len(doc)
-    if page_count > 100:
-        raise HTTPException(status_code=400, detail="Paper exceeds maximum allowed pages (100).")
-        
+
     new_paper = models.Paper(
         title=file.filename,
         page_count=page_count,
