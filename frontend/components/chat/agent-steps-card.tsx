@@ -7,7 +7,7 @@ import { EvidenceChart } from "./evidence-chart";
 import { ChatMessage } from "@/lib/types";
 
 export function AgentStepsCard({ message }: { message: ChatMessage }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
 
   return (
     <Card className="mb-3">
