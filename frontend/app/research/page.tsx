@@ -2,16 +2,15 @@
 
 import { Suspense, useState, useRef, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowUpRight, Plus, Copy, Check, PanelRightClose, PanelRightOpen, RotateCcw, AlertCircle, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, Plus, Copy, Check, RotateCcw, AlertCircle, ChevronDown } from "lucide-react";
 import { useUiStore } from "@/lib/store";
 import { ChatMessage, OutputFormat } from "@/lib/types";
 import { buildResearchView, ResearchView } from "@/lib/research-view";
 import { AgentStepsCard } from "@/components/chat/agent-steps-card";
-import { NeuralField } from "@/components/neural/neural-field";
 import { Composer } from "@/components/research/composer";
-import { AgentLive, AgentRun, Verdicts } from "@/components/research/agent-run";
+import { AgentRun, ThinkingLine } from "@/components/research/agent-run";
+import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ReportBody, SourceRow } from "@/components/research/report-body";
-import { BrandMark } from "@/components/ui/brand-mark";
 import { cn } from "@/lib/utils";
 
 const CHIPS = [
@@ -34,7 +33,7 @@ function EmptyState({ onPick }: { onPick: (t: string) => void }) {
   return (
     <div className="mx-auto grid min-h-full max-w-[1080px] items-center gap-12 px-5 py-12 sm:px-10 lg:grid-cols-[1.1fr_1fr] lg:gap-16">
       <div className="stagger">
-        <h1 className="font-serif text-display-xl font-normal text-ink" style={{ ["--i" as string]: 0 }}>
+        <h1 className="font-display text-display-xl font-semibold text-ink" style={{ ["--i" as string]: 0 }}>
           Ask a question worth researching.
         </h1>
         <p className="mt-5 max-w-[50ch] text-body-lg text-ink-soft" style={{ ["--i" as string]: 1 }}>
@@ -53,12 +52,9 @@ function EmptyState({ onPick }: { onPick: (t: string) => void }) {
         </ol>
       </div>
 
-      <div className="animate-view-in" style={{ animationDelay: "120ms" }}>
-        <div className="lens h-[220px] rounded-[22px] sm:h-[260px]">
-          <NeuralField mode="idle" seed={23} />
-        </div>
-        <div className="mt-6">
-          <div className="col-label mb-1 px-1">Try one of these</div>
+      <div className="animate-view-in rounded-[20px] bg-surface p-6 shadow-sm sm:p-7" style={{ animationDelay: "120ms" }}>
+        <div>
+          <div className="col-label mb-2 px-1">Try one of these</div>
           <ul>
             {CHIPS.map((chip) => (
               <li key={chip} className="border-b border-line last:border-b-0">
@@ -108,184 +104,100 @@ function CopyButton({ text }: { text: string }) {
           setTimeout(() => setDone(false), 1600);
         }
       }}
-      className="pressable inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] text-ink-soft hover:bg-surface2 hover:text-ink"
+      className="pressable -ml-2 inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[13px] text-ink-soft hover:bg-surface2 hover:text-ink"
     >
       <span className="relative h-[14px] w-[14px]">
         <Copy size={14} className={cn("absolute inset-0 transition-[opacity,transform] duration-200", done ? "scale-50 opacity-0" : "opacity-100")} />
         <Check size={14} className={cn("absolute inset-0 text-ok transition-[opacity,transform] duration-200", done ? "opacity-100" : "scale-50 opacity-0")} />
       </span>
-      {done ? "Copied" : "Copy report"}
+      {done ? "Copied" : "Copy"}
     </button>
   );
 }
 
-function Entry({
-  entry,
-  first,
-  active,
-  onActivate,
-  onHover,
-  onRetry,
-  busy,
-}: {
-  entry: EntryData;
-  first: boolean;
-  active: boolean;
-  onActivate: () => void;
-  onHover: () => void;
-  onRetry: (q: string) => void;
-  busy: boolean;
-}) {
-  const { q, a } = entry;
-  const view = a?.view;
-  const isError = !!a?.answer?.startsWith("**Error:**");
-  const body = view?.report ?? a?.answer ?? "";
-
-  const meta = view
-    ? [
-        view.format ? `${view.format.charAt(0).toUpperCase()}${view.format.slice(1)} report` : null,
-        `${view.sources.length} sources`,
-        view.verification.verified ? `${view.verification.verified} quotes verified` : null,
-        view.stats.duration !== undefined ? `${Math.round(view.stats.duration)}s` : null,
-      ].filter(Boolean)
-    : [];
-
+function SourcesToggle({ view }: { view: ResearchView }) {
+  const [open, setOpen] = useState(false);
+  if (!view.sources.length) return null;
   return (
-    <article
-      onMouseEnter={view ? onHover : undefined}
-      className={cn("scroll-mt-6", !first && "border-t border-line pt-14")}
-    >
-      <header className="animate-msg-in">
-        <h2 className={cn("font-serif font-normal text-ink", first ? "text-display" : "text-title")}>{q.text}</h2>
-        {meta.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="flex items-center gap-2 text-meta text-ink-faint">
-              <span className="flex h-5 w-5 items-center justify-center rounded-md bg-primary text-on-primary"><BrandMark size={12} /></span>
-              {meta.join(" · ")}
-            </span>
-            <span className="flex-1" />
-            <CopyButton text={body} />
-            <button
-              onClick={onActivate}
-              className={cn(
-                "pressable hidden h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] hover:bg-surface2 xl:inline-flex",
-                active ? "text-ink" : "text-ink-soft hover:text-ink"
-              )}
-            >
-              <ShieldCheck size={14} /> Evidence
-            </button>
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1.5 rounded-lg py-1 text-[13px] text-ink-soft transition-colors hover:text-ink"
+      >
+        {view.sources.length} sources
+        <span className="text-ink-faint">· {view.verification.verified} quotes verified</span>
+        <ChevronDown size={14} className={cn("text-ink-faint transition-transform duration-200 ease-out", open && "rotate-180")} />
+      </button>
+      <div className={cn("grid transition-[grid-template-rows,opacity] duration-300 ease-out", open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+        <div className="overflow-hidden">
+          <div className="-mx-2 mt-1">
+            {view.sources.map((s, i) => <SourceRow key={s.domain} s={s} index={i} />)}
           </div>
-        )}
-      </header>
-
-      <div className="mt-7">
-        {!a || a.status === "pending" ? (
-          <div className="animate-msg-in">
-            <AgentLive startedAt={a?.startedAt} />
-          </div>
-        ) : isError ? (
-          <div className="animate-msg-in flex items-start gap-3 rounded-2xl bg-bad/[0.07] px-5 py-4">
-            <AlertCircle size={17} className="mt-0.5 flex-shrink-0 text-bad" />
-            <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-medium text-ink">The agent couldn't finish this one.</p>
-              <p className="mt-1 break-words text-meta text-ink-soft">{a.answer?.replace(/^\*\*Error:\*\*\s*/, "")}</p>
-            </div>
-            <button
-              onClick={() => q.text && onRetry(q.text)}
-              disabled={busy}
-              className="pressable inline-flex h-8 flex-shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[12.5px] font-medium text-ink hover:border-line-hover disabled:opacity-40"
-            >
-              <RotateCcw size={13} /> Try again
-            </button>
-          </div>
-        ) : view ? (
-          <div className="flex flex-col gap-10">
-            <div className="animate-msg-in"><AgentRun view={view} /></div>
-            {view.reportError && (
-              <p className="flex items-start gap-2 rounded-xl bg-warn/[0.07] px-4 py-3 text-meta text-ink-soft">
-                <AlertCircle size={14} className="mt-0.5 flex-shrink-0 text-warn" /> {view.reportError}
-              </p>
-            )}
-            <div className="animate-msg-in" style={{ animationDelay: "60ms" }}>
-              <ReportBody markdown={body} view={view} />
-            </div>
-            <div className="animate-msg-in" style={{ animationDelay: "120ms" }}>
-              <Verdicts view={view} />
-            </div>
-            {view.sources.length > 0 && (
-              <section className="xl:hidden">
-                <h3 className="mb-2 text-[16px] font-semibold tracking-[-0.012em] text-ink">Sources</h3>
-                <div className="-mx-2">
-                  {view.sources.map((s, i) => <SourceRow key={s.domain} s={s} index={i} />)}
-                </div>
-              </section>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-8">
-            {!!a.steps?.length && <AgentStepsCard message={a} />}
-            <ReportBody markdown={body} />
-          </div>
-        )}
+        </div>
       </div>
-    </article>
+    </div>
   );
 }
 
-/* ───────────── Evidence rail ───────────── */
-
-type Filter = "all" | "supports" | "refutes" | "verified";
-
-function EvidenceRail({ view, onClose }: { view?: ResearchView; onClose: () => void }) {
-  const [filter, setFilter] = useState<Filter>("all");
-  const sources = (view?.sources ?? []).filter((s) =>
-    filter === "all" ? true : filter === "verified" ? s.verified : s.stances[filter] > 0
-  );
+function Entry({ entry, onRetry, busy }: { entry: EntryData; onRetry: (q: string) => void; busy: boolean }) {
+  const { q, a } = entry;
+  const view = a?.view;
+  const pending = !a || a.status === "pending";
+  const isError = !!a?.answer?.startsWith("**Error:**");
+  const body = view?.report ?? a?.answer ?? "";
 
   return (
-    <aside className="hidden w-[340px] flex-shrink-0 flex-col border-l border-line xl:flex">
-      <div className="flex h-14 items-center justify-between px-5">
-        <span className="text-[13.5px] font-semibold text-ink">Evidence</span>
-        <button onClick={onClose} aria-label="Hide evidence" className="pressable flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint hover:bg-surface2 hover:text-ink">
-          <PanelRightClose size={16} strokeWidth={1.75} />
-        </button>
+    <article className="flex scroll-mt-6 flex-col gap-7">
+      <div className="animate-msg-in ml-auto max-w-[min(85%,600px)] whitespace-pre-wrap rounded-[20px] bg-surface3 px-4 py-2.5 text-[15.5px] leading-relaxed text-ink">
+        {q.text}
       </div>
-      {!view ? (
-        <p className="px-5 text-meta text-ink-faint">Sources for an answer appear here once the agent finishes a run.</p>
-      ) : (
-        <>
-          <div className="px-5">
-            <p className="line-clamp-2 font-serif text-[15px] leading-snug text-ink">{view.question}</p>
-            <div className="mt-4 grid grid-cols-3 border-y border-line py-3 text-center">
-              <div><div className="figure text-[24px] text-ink">{view.sources.length}</div><div className="mt-1 text-[11px] text-ink-faint">sources</div></div>
-              <div className="border-x border-line"><div className="figure text-[24px] text-ink">{view.evidence.length}</div><div className="mt-1 text-[11px] text-ink-faint">evidence</div></div>
-              <div><div className="figure text-[24px] text-ok">{view.verification.verified}</div><div className="mt-1 text-[11px] text-ink-faint">verified</div></div>
+
+      <div className="flex gap-3.5">
+        <ThinkingMark active={pending} className="mt-[3px]" />
+        <div className="min-w-0 flex-1">
+          {pending ? (
+            <ThinkingLine startedAt={a?.startedAt} />
+          ) : isError ? (
+            <div className="animate-msg-in">
+              <p className="text-[15.5px] text-ink">I couldn&apos;t finish this one.</p>
+              <p className="mt-1 break-words text-[14px] text-ink-soft">{a!.answer?.replace(/^\*\*Error:\*\*\s*/, "")}</p>
+              <button
+                onClick={() => q.text && onRetry(q.text)}
+                disabled={busy}
+                className="pressable mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium text-ink hover:border-line-hover disabled:opacity-40"
+              >
+                <RotateCcw size={13} /> Try again
+              </button>
             </div>
-            <div className="mt-3 flex gap-1">
-              {(["all", "supports", "refutes", "verified"] as Filter[]).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={cn(
-                    "pressable rounded-full px-2.5 py-1 text-[11.5px] font-medium capitalize",
-                    filter === f ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-surface2 hover:text-ink"
-                  )}
-                >
-                  {f === "supports" ? "Supporting" : f === "refutes" ? "Refuting" : f}
-                </button>
-              ))}
+          ) : (
+            <div className="animate-msg-in">
+              {view?.reportError && (
+                <p className="mb-4 flex items-start gap-2 text-[13.5px] text-ink-soft">
+                  <AlertCircle size={14} className="mt-0.5 flex-shrink-0 text-warn" /> {view.reportError}
+                </p>
+              )}
+              <ReportBody markdown={body} view={view} />
+              {!view && !!a!.steps?.length && (
+                <div className="mt-6"><AgentStepsCard message={a!} /></div>
+              )}
+              <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                <CopyButton text={body} />
+                {view?.stats.duration !== undefined && (
+                  <span className="text-[12.5px] text-ink-faint">Researched in {Math.round(view.stats.duration)}s</span>
+                )}
+              </div>
+              {view && (
+                <div className="mt-1 flex flex-col items-start gap-0.5">
+                  <SourcesToggle view={view} />
+                  <AgentRun view={view} />
+                </div>
+              )}
             </div>
-          </div>
-          <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-3 pb-6">
-            {sources.length ? (
-              sources.map((s, i) => <SourceRow key={s.domain} s={s} index={i} />)
-            ) : (
-              <p className="px-2 py-6 text-meta text-ink-faint">No sources match this filter.</p>
-            )}
-          </div>
-        </>
-      )}
-    </aside>
+          )}
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -301,8 +213,6 @@ function ResearchPage() {
   const messages = chatHistories["research"];
   const [sending, setSending] = useState(false);
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("full");
-  const [railOpen, setRailOpen] = useState(true);
-  const [activeId, setActiveId] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   // Pair each question with its answer
@@ -315,8 +225,6 @@ function ResearchPage() {
     return out;
   }, [messages]);
 
-  const lastWithView = [...entries].reverse().find((e) => e.a?.view)?.a;
-  const activeView = (entries.find((e) => e.a?.id === activeId)?.a ?? lastWithView)?.view;
 
   // When a new question is asked, bring its entry to the top of the view
   const prevCount = useRef(entries.length);
@@ -418,7 +326,6 @@ function ResearchPage() {
         answer: answer || "No answer returned.",
         view: buildResearchView(res),
       });
-      setActiveId(aId);
     } catch (err: any) {
       let msg = err.message || "Network failure";
       if (err.status === 400) msg = `Invalid research question: ${msg}`;
@@ -442,83 +349,51 @@ function ResearchPage() {
   const threadTitle = entries[0]?.q.text;
 
   return (
-    <div className="flex h-full">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 flex-shrink-0 items-center gap-3 border-b border-line px-4 sm:px-6">
-          <span className="text-[13.5px] font-semibold text-ink">Research</span>
-          {threadTitle && (
-            <>
-              <span className="text-ink-faint">/</span>
-              <span className="min-w-0 truncate text-[13.5px] text-ink-soft">{threadTitle}</span>
-            </>
-          )}
-          <div className="flex-1" />
-          {sending && (
-            <span className="hidden items-center gap-2 text-meta text-ink-soft sm:flex">
-              <span className="live-dot" /> Agent working
-            </span>
-          )}
-          {hasMessages && (
-            <button
-              onClick={() => resetHistory("research", [])}
-              disabled={sending}
-              className="pressable flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-ink-soft hover:bg-surface2 hover:text-ink disabled:opacity-40"
-            >
-              <Plus size={14} /> <span className="hidden sm:inline">New thread</span>
-            </button>
-          )}
-          {hasMessages && !railOpen && (
-            <button
-              onClick={() => setRailOpen(true)}
-              aria-label="Show evidence"
-              className="pressable hidden h-8 w-8 items-center justify-center rounded-lg text-ink-faint hover:bg-surface2 hover:text-ink xl:flex"
-            >
-              <PanelRightOpen size={16} strokeWidth={1.75} />
-            </button>
-          )}
-        </header>
+    <div className="flex h-full flex-col">
+      <header className="flex h-14 flex-shrink-0 items-center gap-3 border-b border-line px-4 sm:px-6">
+        <span className="text-[13.5px] font-semibold text-ink">Research</span>
+        {threadTitle && (
+          <>
+            <span className="text-ink-faint">/</span>
+            <span className="min-w-0 truncate text-[13.5px] text-ink-soft">{threadTitle}</span>
+          </>
+        )}
+        <div className="flex-1" />
+        {hasMessages && (
+          <button
+            onClick={() => resetHistory("research", [])}
+            disabled={sending}
+            className="pressable flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-ink-soft hover:bg-surface2 hover:text-ink disabled:opacity-40"
+          >
+            <Plus size={14} /> <span className="hidden sm:inline">New chat</span>
+          </button>
+        )}
+      </header>
 
-        <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto">
-          {!hasMessages ? (
-            <EmptyState onPick={send} />
-          ) : (
-            <div className="mx-auto flex max-w-[760px] flex-col gap-14 px-5 pb-16 pt-12 sm:px-8">
-              {entries.map((e, i) => (
-                <Entry
-                  key={e.q.id}
-                  entry={e}
-                  first={i === 0}
-                  busy={sending}
-                  active={!!e.a?.view && e.a.view === activeView}
-                  onActivate={() => {
-                    if (e.a?.view) {
-                      setActiveId(e.a.id);
-                      setRailOpen(true);
-                    }
-                  }}
-                  onHover={() => e.a?.view && setActiveId(e.a.id)}
-                  onRetry={send}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="px-4 pb-4 pt-2 sm:px-8 sm:pb-6">
-          <div className="mx-auto max-w-[760px]">
-            <Composer
-              placeholder={hasMessages ? "Ask a follow-up question" : "Ask an open research question"}
-              disabled={sending}
-              busy={sending}
-              onSend={send}
-              format={outputFormat}
-              onFormatChange={setOutputFormat}
-            />
+      <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto">
+        {!hasMessages ? (
+          <EmptyState onPick={send} />
+        ) : (
+          <div className="mx-auto flex max-w-[760px] flex-col gap-12 px-5 pb-16 pt-10 sm:px-8">
+            {entries.map((e) => (
+              <Entry key={e.q.id} entry={e} busy={sending} onRetry={send} />
+            ))}
           </div>
-        </div>
+        )}
       </div>
 
-      {hasMessages && railOpen && <EvidenceRail view={activeView} onClose={() => setRailOpen(false)} />}
+      <div className="px-4 pb-4 pt-2 sm:px-8 sm:pb-6">
+        <div className="mx-auto max-w-[760px]">
+          <Composer
+            placeholder={hasMessages ? "Reply to CogNexa" : "Ask an open research question"}
+            disabled={sending}
+            busy={sending}
+            onSend={send}
+            format={outputFormat}
+            onFormatChange={setOutputFormat}
+          />
+        </div>
+      </div>
     </div>
   );
 }

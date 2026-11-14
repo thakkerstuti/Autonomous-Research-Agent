@@ -94,7 +94,7 @@ export function Sidebar() {
             <span className="pressable flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px] bg-primary text-on-primary">
               <BrandMark size={17} />
             </span>
-            {!collapsed && <span className="truncate font-serif text-[19px] font-medium tracking-[-0.02em] text-ink">CogNexa</span>}
+            {!collapsed && <span className="truncate font-display text-[16px] font-semibold tracking-[-0.03em] text-ink">CogNexa</span>}
           </Link>
           {!collapsed && (
             <button

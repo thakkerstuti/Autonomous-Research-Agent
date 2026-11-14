@@ -14,7 +14,6 @@ import { paperStatus, sessionStatus } from "@/lib/status";
 import { STATUS_TONE } from "@/lib/research-view";
 import { Badge } from "@/components/ui/badge";
 import { ProgressRing, PageStrip } from "@/components/viz/progress";
-import { NeuralField } from "@/components/neural/neural-field";
 import { PaperItem, SessionSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -51,7 +50,7 @@ function parseFinding(text: string) {
 function SectionTitle({ children, aside }: { children: React.ReactNode; aside?: React.ReactNode }) {
   return (
     <div className="mb-5 flex items-baseline justify-between gap-4">
-      <h2 className="font-serif text-title-sm font-normal text-ink">{children}</h2>
+      <h2 className="font-display text-title-sm font-semibold text-ink">{children}</h2>
       {aside}
     </div>
   );
@@ -234,7 +233,7 @@ export default function DashboardPage() {
               </>
             ) : (
               <>
-                <h1 className="mt-3 font-serif text-display-xl font-normal text-ink">{headline}</h1>
+                <h1 className="mt-3 font-display text-display-xl font-semibold text-ink">{headline}</h1>
                 <p className="mt-4 max-w-[58ch] text-body-lg text-ink-soft">{subline}</p>
               </>
             )}
@@ -581,7 +580,7 @@ function ResumeFeature({ item, pages, detail }: { item: ResumeItem; pages?: { st
         <div className="flex items-center gap-2 text-meta text-ink-faint">
           <Icon size={14} strokeWidth={1.75} /> {m.type} {m.status}
         </div>
-        <h3 className="mt-4 line-clamp-2 font-serif text-title font-normal text-ink">{m.title}</h3>
+        <h3 className="mt-4 line-clamp-2 font-display text-title font-semibold text-ink">{m.title}</h3>
         <span className="mt-6 inline-flex items-center gap-1.5 text-[13px] font-medium text-ink">
           {m.action}
           <ArrowRight size={14} className="transition-transform duration-200 ease-out group-hover:translate-x-1" />
@@ -638,11 +637,10 @@ function EmptyDesk({ onAsk }: { onAsk: (q: string) => void }) {
   const [q, setQ] = useState("");
   return (
     <div className="mt-12 grid gap-4 lg:grid-cols-[1.35fr_1fr]">
-      <section className="animate-view-in lens flex min-h-[380px] flex-col justify-end rounded-[22px]" style={{ animationDelay: "140ms" }}>
-        <NeuralField mode="idle" seed={31} />
-        <div className="relative z-10 p-7 [background:linear-gradient(to_top,rgb(5_5_6/0.92)_30%,transparent)] sm:p-9">
-          <h2 className="font-serif text-title font-normal text-[#F3F1EE]">Put the agent to work</h2>
-          <p className="mt-2 max-w-[48ch] text-body text-[#A3A09C]">
+      <section className="auth-forest animate-view-in flex min-h-[380px] flex-col justify-end overflow-hidden rounded-[22px]" style={{ animationDelay: "140ms" }}>
+        <div className="relative z-10 p-7 sm:p-9">
+          <h2 className="font-display text-title font-semibold text-[#EFEDE6]">Put the agent to work</h2>
+          <p className="mt-2 max-w-[48ch] text-body text-[#C3CBBC]">
             It plans hypotheses, searches the literature, checks every quote against its source and writes a cited report.
           </p>
           <form
@@ -657,13 +655,13 @@ function EmptyDesk({ onAsk }: { onAsk: (q: string) => void }) {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Ask a research question"
               aria-label="Ask a research question"
-              className="h-10 min-w-0 flex-1 bg-transparent text-[15px] text-[#F3F1EE] outline-none placeholder:text-[#7C7975]"
+              className="h-10 min-w-0 flex-1 bg-transparent text-[15px] text-[#EFEDE6] outline-none placeholder:text-[#9FAA99]"
             />
             <button
               type="submit"
               disabled={!q.trim()}
               aria-label="Start research"
-              className="pressable flex h-10 w-10 items-center justify-center rounded-[11px] bg-[#F3F1EE] text-[#0B0B0C] disabled:opacity-30"
+              className="pressable flex h-10 w-10 items-center justify-center rounded-[11px] bg-[#EFEDE6] text-[#1B2B1F] disabled:opacity-30"
             >
               <ArrowUp size={17} />
             </button>
@@ -672,7 +670,7 @@ function EmptyDesk({ onAsk }: { onAsk: (q: string) => void }) {
       </section>
 
       <section className="animate-view-in flex flex-col rounded-[22px] border border-line p-7 sm:p-9" style={{ animationDelay: "200ms" }}>
-        <h2 className="font-serif text-title font-normal text-ink">Bring a paper</h2>
+        <h2 className="font-display text-title font-semibold text-ink">Bring a paper</h2>
         <p className="mt-2 text-body text-ink-soft">Upload a PDF and CogNexa summarises it page by page, at the depth you choose.</p>
         <Link
           href="/paper-study"

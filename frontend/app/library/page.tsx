@@ -82,7 +82,7 @@ export default function LibraryPage() {
                 <FileText size={15} strokeWidth={1.5} className="text-ink-faint" />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="truncate font-serif text-[18px] leading-snug text-ink">{p.title}</div>
+                <div className="truncate text-[15px] font-medium leading-snug text-ink">{p.title}</div>
                 <div className="mt-0.5 text-[12.5px] text-ink-faint">
                   {p.authors}
                   {p.pages > 0 && <> · <span className="mono">{p.pages}</span> pages</>} · uploaded {p.uploaded}
@@ -122,7 +122,7 @@ export default function LibraryPage() {
 
           {!isLoading && all.length === 0 && (
             <div className="py-16 text-center">
-              <p className="font-serif text-title-sm text-ink">Your library is empty</p>
+              <p className="font-display text-title-sm font-semibold text-ink">Your library is empty</p>
               <p className="mt-1 text-[13.5px] text-ink-soft">Upload a PDF and it will appear here, ready to study.</p>
               <Button variant="outline" className="mt-5" onClick={() => fileRef.current?.click()}>
                 <Upload size={15} /> Upload PDF

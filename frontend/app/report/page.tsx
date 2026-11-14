@@ -14,7 +14,7 @@ export default function ReportPage() {
     return (
       <div className="h-full overflow-y-auto">
         <div className="mx-auto flex min-h-full max-w-[560px] flex-col justify-center px-5 py-14 sm:px-10">
-          <h1 className="font-serif text-display font-normal text-ink">No report yet</h1>
+          <h1 className="font-display text-display font-semibold text-ink">No report yet</h1>
           <p className="mt-4 text-[15px] leading-relaxed text-ink-soft">
             Run a research question with the Full report depth and your latest report will appear here, with findings, confidence and citations.
           </p>
@@ -51,14 +51,14 @@ export default function ReportPage() {
       <article className="mx-auto max-w-[760px] px-5 pb-20 pt-10 sm:px-10 sm:pt-14">
         <header className="animate-view-in">
           <p className="text-[13px] text-ink-faint">Research report · updated {report.updated}</p>
-          <h1 className="mt-4 font-serif text-display font-normal text-ink">
+          <h1 className="mt-4 font-display text-display font-semibold text-ink">
             {report.question}
           </h1>
           <p className="report-prose mt-7 !text-[19px]">{report.summary}</p>
         </header>
 
         <section className="animate-view-in mt-14" style={{ animationDelay: "70ms" }}>
-          <h2 className="font-serif text-title-sm font-normal text-ink">Findings</h2>
+          <h2 className="font-display text-title-sm font-semibold text-ink">Findings</h2>
           <ol className="mt-4 border-t border-line">
             {report.findings.map((f, i) => (
               <li key={f.id} className="grid grid-cols-[28px_1fr] gap-x-3 border-b border-line py-5 sm:grid-cols-[28px_1fr_auto] sm:gap-x-6">
@@ -74,7 +74,7 @@ export default function ReportPage() {
                             <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} /> {tone.label}
                           </span>
                         )}
-                        <p className="font-serif text-[18px] leading-[1.55] text-ink">{m ? m[2] : f.text}</p>
+                        <p className="font-serif text-[17.5px] leading-[1.6] text-ink">{m ? m[2] : f.text}</p>
                       </>
                     );
                   })()}
@@ -106,7 +106,7 @@ export default function ReportPage() {
         </section>
 
         <section className="mt-14">
-          <h2 className="font-serif text-title-sm font-normal text-ink">Citations</h2>
+          <h2 className="font-display text-title-sm font-semibold text-ink">Citations</h2>
           <ol className="mt-4 border-t border-line">
             {report.citations.map((c, i) => (
               <li key={c.id} id={c.id} className="grid scroll-mt-8 grid-cols-[28px_1fr] gap-3 border-b border-line py-4 target:bg-accent-soft">

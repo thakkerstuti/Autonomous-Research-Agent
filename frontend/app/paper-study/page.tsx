@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { FloatingPanel, PanelType } from "@/components/ui/floating-panel";
 import { ResearchCanvas } from "@/components/ui/research-canvas";
 import { spreadLayout } from "@/lib/canvas-layout";
-import { NeuralThinking } from "@/components/neural/neural-thinking";
+import { ThinkingMark } from "@/components/research/thinking-mark";
 import { cn } from "@/lib/utils";
 
 type Step = "upload" | "level" | "processing" | "done";
@@ -422,10 +422,9 @@ function UploadStep({ onFile, error }: { onFile: (f: File, pages: number) => voi
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex min-h-full max-w-[640px] flex-col justify-center px-5 py-12 sm:px-7">
         <div className="animate-view-in">
-          <h1 className="font-serif text-display-xl font-normal text-ink">
+          <h1 className="font-display text-display-xl font-semibold text-ink">
             Spread the paper on a desk.
           </h1>
-          <span className="accent-rule mt-6" />
           <p className="mt-4 max-w-[50ch] text-[15px] leading-relaxed text-ink-soft">
             Open several page summaries at once, drag them side by side, resize any edge and keep the whole argument in view.
           </p>
@@ -533,18 +532,22 @@ function ProcessingStep({ paperId, onDone }: { paperId: string; onDone: () => vo
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex min-h-full max-w-[680px] flex-col justify-center px-5 py-12 sm:px-7">
-        <h1 className="animate-view-in font-serif text-display font-normal text-ink">
+        <h1 className="animate-view-in font-display text-display font-semibold text-ink">
           {isDemo ? "Spreading the pages…" : "Reading your paper…"}
         </h1>
         <p className="animate-view-in mt-3 text-[15px] text-ink-soft" style={{ animationDelay: "60ms" }}>
           Summaries will sit together so you can read them as one argument.
         </p>
-        <NeuralThinking
-          className="animate-view-in mt-8"
-          label={isDemo ? "Preparing canvas" : "Analysing"}
-          detail={detail}
-          height={300}
-        />
+        <div className="animate-view-in mt-8 rounded-[20px] bg-surface p-6 shadow-sm" role="status" aria-live="polite">
+          <div className="flex items-center gap-3">
+            <ThinkingMark active size={24} />
+            <div className="min-w-0">
+              <div className="text-[15px] font-medium text-ink">{isDemo ? "Preparing the canvas" : "Analysing the paper"}</div>
+              <div className="mt-0.5 text-[13.5px] text-ink-soft">{detail}</div>
+            </div>
+          </div>
+          <div className="scan mt-5 h-1 overflow-hidden rounded-full bg-ink/[0.07]" />
+        </div>
       </div>
     </div>
   );
@@ -602,7 +605,7 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
             </div>
           </div>
 
-          <h2 className="animate-view-in mt-10 font-serif text-display font-normal text-ink" style={{ animationDelay: "60ms" }}>
+          <h2 className="animate-view-in mt-10 font-display text-display font-semibold text-ink" style={{ animationDelay: "60ms" }}>
             How should CogNexa explain it?
           </h2>
           <p className="animate-view-in mt-2 text-[15px] text-ink-soft" style={{ animationDelay: "60ms" }}>

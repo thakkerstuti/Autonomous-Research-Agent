@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
-import { Lightbulb, Eye, Flag, ArrowUpRight, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, ShieldCheck } from "lucide-react";
 import { ResearchView, ViewEvidence, STANCE_TONE } from "@/lib/research-view";
 import { cn } from "@/lib/utils";
 
@@ -89,12 +89,6 @@ function Markdown({ text, evidence }: { text: string; evidence: Map<string, View
           }
           return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
         },
-        blockquote: ({ node, children }) => (
-          <aside className="not-prose my-6 flex gap-3 rounded-xl bg-warn/[0.07] px-5 py-4 font-sans text-[14.5px] leading-relaxed text-ink-soft [&_p]:m-0">
-            <Eye size={16} className="mt-1 flex-shrink-0 text-warn" />
-            <div className="min-w-0">{children}</div>
-          </aside>
-        ),
       }}
     >
       {prepared}
@@ -102,81 +96,20 @@ function Markdown({ text, evidence }: { text: string; evidence: Map<string, View
   );
 }
 
-const SECTION_ICON: Partial<Record<Kind, React.ElementType>> = { insight: Lightbulb, observation: Eye, conclusion: Flag };
-
 export function ReportBody({ markdown, view }: { markdown: string; view?: ResearchView }) {
   const evidence = useMemo(() => new Map((view?.evidence ?? []).map((e) => [e.id, e])), [view]);
-  const sections = useMemo(() => {
-    const all = splitSections(markdown);
-    // The evidence rail lists sources, so the report's own reference list is folded away
-    return view ? all.filter((s) => s.kind !== "references") : all;
+  const text = useMemo(() => {
+    const sections = splitSections(markdown);
+    // Sources are listed under the answer, so the report's own reference list is dropped
+    const kept = view ? sections.filter((s) => s.kind !== "references") : sections;
+    return kept
+      .map((s) => (s.heading ? `${"#".repeat(s.level)} ${s.heading}\n${s.body}` : s.body))
+      .join("\n");
   }, [markdown, view]);
 
   return (
-    <div className="flex flex-col gap-9">
-      {sections.map((s, i) => {
-        const Icon = SECTION_ICON[s.kind];
-        const heading = s.heading ? (
-          <h3
-            className={cn(
-              "mb-3 flex items-center gap-2 font-sans font-semibold tracking-[-0.012em] text-ink",
-              s.level === 1 ? "text-[19px]" : "text-[16px]"
-            )}
-          >
-            {Icon && <Icon size={16} className={cn(s.kind === "observation" ? "text-warn" : "text-accent")} />}
-            {s.heading}
-          </h3>
-        ) : null;
-
-        if (s.kind === "summary") {
-          return (
-            <section key={i}>
-              {heading}
-              <div className="report-prose !text-[20px] !leading-[1.6] !text-ink sm:!text-[21px]">
-                <Markdown text={s.body} evidence={evidence} />
-              </div>
-            </section>
-          );
-        }
-        if (s.kind === "insight") {
-          return (
-            <section key={i} className="rounded-2xl bg-accent-soft px-6 py-5 sm:px-7 sm:py-6">
-              {heading}
-              <div className="report-prose !text-[17px]">
-                <Markdown text={s.body} evidence={evidence} />
-              </div>
-            </section>
-          );
-        }
-        if (s.kind === "observation") {
-          return (
-            <section key={i} className="rounded-2xl bg-warn/[0.06] px-6 py-5 sm:px-7 sm:py-6">
-              {heading}
-              <div className="report-prose !text-[16.5px]">
-                <Markdown text={s.body} evidence={evidence} />
-              </div>
-            </section>
-          );
-        }
-        if (s.kind === "conclusion") {
-          return (
-            <section key={i} className="border-t border-ink/80 pt-6">
-              {heading}
-              <div className="report-prose !text-[19px] !text-ink">
-                <Markdown text={s.body} evidence={evidence} />
-              </div>
-            </section>
-          );
-        }
-        return (
-          <section key={i} className={cn(s.kind === "findings" && "[&_.report-prose_ol]:pl-0")}>
-            {heading && <div className={cn(i > 0 && "border-t border-line pt-7")}>{heading}</div>}
-            <div className="report-prose">
-              <Markdown text={s.body} evidence={evidence} />
-            </div>
-          </section>
-        );
-      })}
+    <div className="report-prose chat-prose">
+      <Markdown text={text} evidence={evidence} />
     </div>
   );
 }
@@ -191,7 +124,7 @@ export function SourceRow({ s, index }: { s: ResearchView["sources"][number]; in
       rel="noopener noreferrer"
       className="group grid grid-cols-[28px_1fr_auto] items-start gap-3 rounded-xl px-2 py-3 transition-colors duration-150 hover:bg-surface2"
     >
-      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface3 font-serif text-[14px] uppercase text-ink-soft">
+      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface3 text-[12px] font-semibold uppercase text-ink-soft">
         {s.domain.charAt(0)}
       </span>
       <span className="min-w-0">

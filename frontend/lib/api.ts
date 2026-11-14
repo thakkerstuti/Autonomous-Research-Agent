@@ -10,7 +10,10 @@ export class ApiError extends Error {
   }
 }
 
+// In local development, requests go through the dev server's /backend relay
+// (see next.config.mjs) so the deployed backend's CORS rules don't block localhost.
 const API_BASE =
+  (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_API_URL ? "/backend" : "") ||
   process.env.NEXT_PUBLIC_API_URL ||
   (typeof window !== "undefined" && window.location.hostname === "localhost"
     ? "http://localhost:8000"

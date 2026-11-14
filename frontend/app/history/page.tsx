@@ -79,7 +79,7 @@ export default function HistoryPage() {
           {groups.map((g) => (
             <section key={g.key} className="grid gap-x-10 border-t border-line pt-6 md:grid-cols-[180px_1fr]">
               <div className="mb-3 md:sticky md:top-20 md:mb-0 md:self-start">
-                <h2 className="font-serif text-title-sm font-normal text-ink">{g.label}</h2>
+                <h2 className="font-display text-title-sm font-semibold text-ink">{g.label}</h2>
                 <p className="mt-1 text-meta text-ink-faint">{g.items.length} {g.items.length === 1 ? "session" : "sessions"}</p>
               </div>
               <ol className="pb-8">
@@ -91,7 +91,7 @@ export default function HistoryPage() {
                     >
                       <span className="figure pt-0.5 text-[22px] text-ink-faint">{s.day}</span>
                       <span className="min-w-0">
-                        <span className="block font-serif text-[18px] leading-snug text-ink">{s.title}</span>
+                        <span className="block text-[15px] font-medium leading-snug text-ink">{s.title}</span>
                         <span className="mt-1.5 flex items-center gap-2 text-meta text-ink-faint">
                           <span className={cn("h-1.5 w-1.5 rounded-full", s.mode === "research" ? "bg-accent" : "bg-steel")} />
                           {s.mode === "research" ? "Research" : "Paper study"}
@@ -111,7 +111,7 @@ export default function HistoryPage() {
 
           {visible && visible.length === 0 && (
             <div className="border-t border-line py-20 text-center">
-              <p className="font-serif text-title-sm text-ink">{query ? "Nothing matches that search" : "No sessions yet"}</p>
+              <p className="font-display text-title-sm font-semibold text-ink">{query ? "Nothing matches that search" : "No sessions yet"}</p>
               <p className="mt-2 text-body text-ink-soft">
                 {query ? "Try a shorter phrase, or switch to All." : "Your investigations and paper studies will collect here."}
               </p>

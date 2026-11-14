@@ -13,6 +13,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     initTheme();
   }, [initTheme]);
 
+  // The landing page brings its own layout (its sticky 3D stage needs an unclipped scroll)
+  if (pathname === "/") return <>{children}</>;
+
+  // Pages that stand alone, without the app sidebar
   const isAuthPage = pathname === "/login" || pathname === "/signup";
 
   if (isAuthPage) {

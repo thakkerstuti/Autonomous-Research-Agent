@@ -46,16 +46,17 @@ const config: Config = {
         grad2:           rgb("--accent"),
       },
       fontFamily: {
+        display: ["var(--font-display)", "system-ui", "sans-serif"],
         serif: ["var(--font-serif)", "Georgia", "serif"],
         sans:  ["var(--font-sans)", "system-ui", "sans-serif"],
         mono:  ["var(--font-mono)", "ui-monospace", "monospace"],
       },
       fontSize: {
         /* Editorial scale — serif display, sans interface, mono data */
-        "display-xl": ["clamp(40px, 4.6vw, 62px)", { lineHeight: "1.02", letterSpacing: "-0.022em" }],
-        display:      ["clamp(32px, 3.4vw, 44px)", { lineHeight: "1.06", letterSpacing: "-0.018em" }],
-        title:        ["26px", { lineHeight: "1.18", letterSpacing: "-0.012em" }],
-        "title-sm":   ["20px", { lineHeight: "1.25", letterSpacing: "-0.01em" }],
+        "display-xl": ["clamp(30px, 3vw, 40px)", { lineHeight: "1.1", letterSpacing: "-0.035em" }],
+        display:      ["clamp(26px, 2.4vw, 32px)", { lineHeight: "1.15", letterSpacing: "-0.03em" }],
+        title:        ["21px", { lineHeight: "1.25", letterSpacing: "-0.022em" }],
+        "title-sm":   ["16.5px", { lineHeight: "1.3", letterSpacing: "-0.015em" }],
         heading:      ["14.5px", { lineHeight: "1.35", letterSpacing: "-0.01em" }],
         "body-lg":    ["16.5px", { lineHeight: "1.7" }],
         body:         ["14px", { lineHeight: "1.55" }],

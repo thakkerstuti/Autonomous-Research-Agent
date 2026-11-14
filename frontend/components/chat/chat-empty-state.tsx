@@ -9,7 +9,7 @@ interface Props {
 export function ChatEmptyState({ heading, chips, onPick }: Props) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 text-center">
-      <h2 className="font-serif text-2xl font-semibold">{heading}</h2>
+      <h2 className="font-display text-2xl font-semibold">{heading}</h2>
       <div className="flex max-w-lg flex-wrap justify-center gap-2">
         {chips.map((chip) => (
           <button
