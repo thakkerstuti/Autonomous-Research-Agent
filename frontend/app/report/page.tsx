@@ -1,91 +1,139 @@
 "use client";
 
+import Link from "next/link";
+import { ArrowUpRight, ArrowRight } from "lucide-react";
 import { useReportQuery } from "@/lib/queries";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { EvidenceChart } from "@/components/chat/evidence-chart";
+import { cn } from "@/lib/utils";
+import { STATUS_TONE } from "@/lib/research-view";
 
 export default function ReportPage() {
   const { data: report, isLoading } = useReportQuery();
 
+  if (!isLoading && !report) {
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="mx-auto flex min-h-full max-w-[560px] flex-col justify-center px-5 py-14 sm:px-10">
+          <h1 className="font-serif text-display font-normal text-ink">No report yet</h1>
+          <p className="mt-4 text-[15px] leading-relaxed text-ink-soft">
+            Run a research question with the Full report depth and your latest report will appear here, with findings, confidence and citations.
+          </p>
+          <Link
+            href="/research"
+            className="pressable mt-8 inline-flex h-10 w-fit items-center gap-2 rounded-xl bg-primary px-4 text-[13px] font-medium text-on-primary"
+          >
+            Start research <ArrowRight size={14} />
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (isLoading || !report) {
-    return <p className="p-10 text-sm text-ink-faint">Loading report…</p>;
+    return (
+      <div className="mx-auto max-w-[760px] px-5 pt-14 sm:px-10">
+        <div className="h-3 w-40 animate-pulse rounded bg-surface3" />
+        <div className="mt-5 h-9 w-4/5 animate-pulse rounded-lg bg-surface3" />
+        <div className="mt-3 h-9 w-3/5 animate-pulse rounded-lg bg-surface3" />
+        <div className="mt-8 space-y-2.5">
+          <div className="h-3.5 animate-pulse rounded bg-surface3" />
+          <div className="h-3.5 animate-pulse rounded bg-surface3" />
+          <div className="h-3.5 w-2/3 animate-pulse rounded bg-surface3" />
+        </div>
+      </div>
+    );
   }
 
   const citationIndex = (id: string) => report.citations.findIndex((c) => c.id === id) + 1;
 
   return (
-    <div className="animate-view-in h-full overflow-y-auto px-10 py-10 relative">
-      <div className="mx-auto max-w-3xl">
-        <p className="text-xs text-ink-faint">Research Report · updated {report.updated}</p>
-        <h1 className="mt-1 font-serif text-2xl font-semibold">{report.question}</h1>
-        <p className="mt-3 text-sm leading-relaxed text-ink-soft">{report.summary}</p>
+    <div className="h-full overflow-y-auto">
+      <article className="mx-auto max-w-[760px] px-5 pb-20 pt-10 sm:px-10 sm:pt-14">
+        <header className="animate-view-in">
+          <p className="text-[13px] text-ink-faint">Research report · updated {report.updated}</p>
+          <h1 className="mt-4 font-serif text-display font-normal text-ink">
+            {report.question}
+          </h1>
+          <p className="report-prose mt-7 !text-[19px]">{report.summary}</p>
+        </header>
 
-        <section className="mt-8">
-          <h2 className="mb-3 font-serif text-base font-semibold">Findings</h2>
-          <div className="flex flex-col gap-3">
-            {report.findings.map((f) => (
-              <Card key={f.id} className="flex items-start gap-4">
-                <div className="flex-1">
-                  <p className="text-sm text-ink">{f.text}</p>
-                  <div className="mt-2 flex gap-1.5">
+        <section className="animate-view-in mt-14" style={{ animationDelay: "70ms" }}>
+          <h2 className="font-serif text-title-sm font-normal text-ink">Findings</h2>
+          <ol className="mt-4 border-t border-line">
+            {report.findings.map((f, i) => (
+              <li key={f.id} className="grid grid-cols-[28px_1fr] gap-x-3 border-b border-line py-5 sm:grid-cols-[28px_1fr_auto] sm:gap-x-6">
+                <span className="mono pt-0.5 text-[13px] text-ink-faint">{i + 1}</span>
+                <div className="min-w-0">
+                  {(() => {
+                    const m = f.text.match(/^\[([A-Z_]+)\]\s*(.*)$/);
+                    const tone = m ? STATUS_TONE[m[1].toLowerCase()] : undefined;
+                    return (
+                      <>
+                        {tone && (
+                          <span className={cn("mb-1.5 flex items-center gap-1.5 text-[12px] font-medium", tone.cls)}>
+                            <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} /> {tone.label}
+                          </span>
+                        )}
+                        <p className="font-serif text-[18px] leading-[1.55] text-ink">{m ? m[2] : f.text}</p>
+                      </>
+                    );
+                  })()}
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
                     {f.citationIds.map((cid) => (
                       <a
                         key={cid}
                         href={`#${cid}`}
-                        className="rounded-md border border-line px-1.5 text-xs text-ink-soft hover:border-grad2 hover:text-ink"
+                        className="mono rounded-md bg-surface3/70 px-1.5 py-0.5 text-[11.5px] text-ink-soft transition-colors hover:bg-accent-soft hover:text-accent"
                       >
                         [{citationIndex(cid)}]
                       </a>
                     ))}
                   </div>
                 </div>
-                <Badge variant={f.confidence >= 75 ? "ready" : f.confidence >= 60 ? "default" : "review"}>
-                  {f.confidence}% confidence
-                </Badge>
-              </Card>
+                <div className="col-start-2 mt-3 sm:col-start-3 sm:mt-0 sm:text-right">
+                  <div className="figure text-[26px] text-ink">{f.confidence}%</div>
+                  <div className="mt-1 text-[11.5px] text-ink-faint">confidence</div>
+                </div>
+              </li>
             ))}
-          </div>
+          </ol>
         </section>
 
-        <section className="mt-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>Evidence strength by source</CardTitle>
-            </CardHeader>
-            <EvidenceChart sources={report.sources} />
-          </Card>
+        <section className="animate-view-in mt-14 rounded-2xl bg-surface p-6 shadow-sm" style={{ animationDelay: "120ms" }}>
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">Evidence strength by source</h2>
+          <p className="mb-5 mt-1 text-[13px] text-ink-soft">How much each source supports the findings above.</p>
+          <EvidenceChart sources={report.sources} />
         </section>
 
-        <section className="mt-8 pb-6">
-          <h2 className="mb-3 font-serif text-base font-semibold">Citations</h2>
-          <div className="divide-y divide-line border-t border-line">
+        <section className="mt-14">
+          <h2 className="font-serif text-title-sm font-normal text-ink">Citations</h2>
+          <ol className="mt-4 border-t border-line">
             {report.citations.map((c, i) => (
-              <div key={c.id} id={c.id} className="flex gap-3 py-3.5">
-                <span className="w-6 text-sm text-ink-faint">[{i + 1}]</span>
-                <div>
+              <li key={c.id} id={c.id} className="grid scroll-mt-8 grid-cols-[28px_1fr] gap-3 border-b border-line py-4 target:bg-accent-soft">
+                <span className="mono pt-0.5 text-[13px] text-ink-faint">{i + 1}</span>
+                <div className="min-w-0">
                   {c.url ? (
                     <a
                       href={c.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-sm font-medium hover:text-rose hover:underline inline-flex items-center gap-1"
+                      className="group inline-flex items-start gap-1 text-[14.5px] font-medium text-ink hover:text-accent"
                     >
                       {c.title}
-                      <span className="text-xs text-ink-faint">↗</span>
+                      <ArrowUpRight size={14} className="mt-0.5 flex-shrink-0 text-ink-faint transition-transform duration-200 ease-out group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-accent" />
                     </a>
                   ) : (
-                    <div className="text-sm font-medium">{c.title}</div>
+                    <div className="text-[14.5px] font-medium text-ink">{c.title}</div>
                   )}
-                  <CardContent className="text-xs">
+                  <p className="mt-0.5 text-[13px] text-ink-faint">
                     {c.domain} · {c.note}
-                  </CardContent>
+                  </p>
                 </div>
-              </div>
+              </li>
             ))}
-          </div>
+          </ol>
         </section>
-      </div>
+      </article>
     </div>
   );
 }

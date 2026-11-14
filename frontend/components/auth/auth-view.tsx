@@ -3,25 +3,13 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  Mail,
-  Lock,
-  User,
-  Eye,
-  EyeOff,
-  ArrowRight,
-  Sparkles,
-  CheckCircle2,
-  AlertCircle,
-  Loader2,
-  Sun,
-  Moon,
-  Zap,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Eye, EyeOff, ArrowRight, CheckCircle2, AlertCircle, Loader2, Sun, Moon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
 import { useUiStore } from "@/lib/store";
+import { toggleThemeWithReveal } from "@/lib/theme-transition";
+import { NeuralField } from "@/components/neural/neural-field";
+import { BrandMark } from "@/components/ui/brand-mark";
 
 interface AuthViewProps {
   mode: "login" | "signup";
@@ -36,14 +24,42 @@ const ROLES = [
   "Independent Researcher",
 ];
 
+const PROVIDERS = ["Google", "GitHub", "ORCID"] as const;
+
+function ProviderIcon({ provider }: { provider: (typeof PROVIDERS)[number] }) {
+  if (provider === "Google") {
+    return (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden>
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+      </svg>
+    );
+  }
+  if (provider === "GitHub") {
+    return (
+      <svg className="h-4 w-4 fill-current" viewBox="0 0 24 24" aria-hidden>
+        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden>
+      <circle cx="12" cy="12" r="11" fill="#A6CE39" />
+      <path fill="#fff" d="M8.2 17.4H6.8V9.6h1.4v7.8zM10.3 9.6h3.4c3 0 4.5 2.1 4.5 3.9 0 2-1.6 3.9-4.5 3.9h-3.4V9.6zm1.4 6.6h1.9c2.6 0 3.2-1.9 3.2-2.7 0-1.6-1-2.7-3.2-2.7h-1.9v5.4zM7.5 6.4a.9.9 0 110 1.8.9.9 0 010-1.8z" />
+    </svg>
+  );
+}
+
 export function AuthView({ mode: initialMode }: AuthViewProps) {
   const router = useRouter();
   const { login, theme, toggleTheme } = useUiStore();
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
 
-  // Form states
+  // Form state
   const [email, setEmail] = useState("alex.morgan@stanford.edu");
-  const [password, setPassword] = useState("••••••••••••");
+  const [password, setPassword] = useState("demo-password");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState(ROLES[0]);
   const [showPassword, setShowPassword] = useState(false);
@@ -69,54 +85,39 @@ export function AuthView({ mode: initialMode }: AuthViewProps) {
       role: "Lead Researcher",
       institution: "Stanford AI Lab",
     });
-    setSuccessMessage("Welcome back, Dr. Morgan! Opening workspace...");
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 400);
+    setSuccessMessage("Welcome back. Opening your workspace…");
+    setTimeout(() => router.push("/dashboard"), 400);
   };
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-
     if (!email || !password) {
-      setErrorMessage("Please enter both email and password.");
+      setErrorMessage("Enter both your email and password.");
       return;
     }
-
     setLoading(true);
     login({
       name: email.split("@")[0].replace(".", " ") || "Researcher",
-      email: email,
+      email,
       role: "Academic Researcher",
       institution: "Research Workspace",
     });
-    setSuccessMessage("Signed in successfully! Redirecting...");
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 400);
+    setSuccessMessage("Signed in. Redirecting…");
+    setTimeout(() => router.push("/dashboard"), 400);
   };
 
   const handleSignUpSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-
     if (!fullName || !email || !password) {
-      setErrorMessage("Please fill in your name, email, and password.");
+      setErrorMessage("Fill in your name, email and password to continue.");
       return;
     }
-
     setLoading(true);
-    login({
-      name: fullName,
-      email: email,
-      role: role,
-      institution: "Academic Workspace",
-    });
-    setSuccessMessage("Account created! Opening your research canvas...");
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 400);
+    login({ name: fullName, email, role, institution: "Academic Workspace" });
+    setSuccessMessage("Account created. Opening your workspace…");
+    setTimeout(() => router.push("/dashboard"), 400);
   };
 
   const handleSocialAuth = (provider: string) => {
@@ -128,10 +129,8 @@ export function AuthView({ mode: initialMode }: AuthViewProps) {
       role: "Academic Researcher",
       institution: "Research Institution",
     });
-    setSuccessMessage(`Authenticated with ${provider}!`);
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 400);
+    setSuccessMessage(`Signed in with ${provider}.`);
+    setTimeout(() => router.push("/dashboard"), 400);
   };
 
   const handleForgotSubmit = (e: React.FormEvent) => {
@@ -144,376 +143,229 @@ export function AuthView({ mode: initialMode }: AuthViewProps) {
     }, 600);
   };
 
+  const switchMode = (m: "login" | "signup") => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setMode(m);
+  };
+
+  const busy = loading || demoLoading || socialLoading !== null;
+  const inputCls = "h-11 text-[14px]";
+  const labelCls = "mb-1.5 block text-[13px] font-medium text-ink-soft";
+
   return (
-    <div className="relative min-h-screen w-full flex flex-col items-center justify-center bg-bg px-4 py-8 overflow-hidden text-ink">
-      {/* Background ambient lighting */}
-      <div className="aurora aurora-a opacity-30" />
-      <div className="aurora aurora-b opacity-30" />
-
-      {/* Floating Theme Toggle in top-right corner */}
-      <div className="absolute top-5 right-5 z-20">
-        <button
-          onClick={toggleTheme}
-          title={theme === "light" ? "Switch to Dark mode" : "Switch to Light mode"}
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-line bg-surface/80 text-ink-soft shadow-sm backdrop-blur-md transition-all hover:bg-surface2 hover:text-ink"
-        >
-          {theme === "light" ? <Moon size={15} /> : <Sun size={15} className="text-warn" />}
-        </button>
-      </div>
-
-      {/* Centered Auth Card */}
-      <div className="relative z-10 w-full max-w-[420px] rounded-3xl border border-line bg-surface/95 p-7 sm:p-9 shadow-panel backdrop-blur-2xl transition-all">
-        {/* Brand Header */}
-        <div className="flex flex-col items-center text-center">
-          <Link
-            href="/dashboard"
-            className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-rose to-lavender shadow-sm transition-transform hover:scale-105"
-            title="CogNexa"
-          >
-            <Sparkles size={20} className="text-white" />
+    <div className="grid min-h-[100dvh] w-full bg-bg text-ink lg:grid-cols-[1.05fr_1fr]">
+      {/* Neural side — always dark */}
+      <aside className="lens relative hidden min-h-[100dvh] lg:block">
+        <NeuralField mode="idle" seed={5} />
+        <div className="absolute inset-0 z-10 flex flex-col justify-between p-12 [background:linear-gradient(to_top,rgb(5_5_6/0.9),transparent_45%)]">
+          <Link href="/dashboard" className="flex w-fit items-center gap-2.5 text-[#F3F1EE]">
+            <BrandMark size={22} />
+            <span className="font-serif text-[20px] font-medium tracking-[-0.02em]">CogNexa</span>
           </Link>
+          <div>
+            <h2 className="font-serif text-[64px] font-normal leading-[1] tracking-[-0.025em] text-[#F3F1EE]">
+              Research,
+              <br />
+              verified.
+            </h2>
+            <span className="mt-7 block h-[2px] w-10 rounded bg-[#D7A2C6]" />
+            <p className="mt-5 max-w-[40ch] text-[15px] leading-relaxed text-[#A3A09C]">
+              Ask open questions, study papers page by page, and keep every claim tied to a citation you can check.
+            </p>
+          </div>
+        </div>
+      </aside>
 
-          <h1 className="mt-4 font-serif text-2xl sm:text-[26px] font-semibold tracking-tight text-ink">
-            Cog<span className="text-rose">Nexa</span>
-          </h1>
-          <p className="mt-1 text-xs sm:text-[13px] text-ink-soft">
-            {mode === "login"
-              ? "Welcome back to your research workspace"
-              : "Create your autonomous research workspace"}
+      {/* Form side */}
+      <section className="relative flex min-h-[100dvh] flex-col px-6 py-6 sm:px-10">
+        <div className="flex items-center justify-between">
+          <Link href="/dashboard" className="flex items-center gap-2 text-ink lg:invisible">
+            <BrandMark size={20} />
+            <span className="text-[15px] font-semibold tracking-[-0.03em]">CogNexa</span>
+          </Link>
+          <button
+            onClick={(e) => toggleThemeWithReveal(e, toggleTheme)}
+            aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+            className="pressable flex h-9 w-9 items-center justify-center rounded-xl text-ink-faint hover:bg-surface2 hover:text-ink"
+          >
+            {theme === "light" ? <Moon size={16} strokeWidth={1.75} /> : <Sun size={16} strokeWidth={1.75} />}
+          </button>
+        </div>
+
+        <div className="mx-auto flex w-full max-w-[380px] flex-1 flex-col justify-center py-10">
+          <div key={mode} className="animate-view-in">
+            <h1 className="font-serif text-[38px] font-normal leading-[1.08] tracking-[-0.018em] text-ink">
+              {mode === "login" ? "Welcome back" : "Create your account"}
+            </h1>
+            <p className="mt-2 text-[14.5px] text-ink-soft">
+              {mode === "login" ? "Sign in to your research workspace." : "Set up a workspace for your research."}
+            </p>
+          </div>
+
+          <div className="mt-8 grid grid-cols-3 gap-2">
+            {PROVIDERS.map((provider) => (
+              <button
+                key={provider}
+                type="button"
+                onClick={() => handleSocialAuth(provider)}
+                disabled={busy}
+                aria-label={`Continue with ${provider}`}
+                className="pressable flex h-10 items-center justify-center gap-2 rounded-xl border border-line bg-surface text-[13px] font-medium text-ink-soft hover:border-line-hover hover:text-ink disabled:opacity-50"
+              >
+                {socialLoading === provider ? <Loader2 size={14} className="animate-spin" /> : <ProviderIcon provider={provider} />}
+                <span className="hidden sm:inline">{provider}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="my-7 flex items-center gap-3 text-[12px] text-ink-faint">
+            <span className="h-px flex-1 bg-line" />
+            or with email
+            <span className="h-px flex-1 bg-line" />
+          </div>
+
+          {errorMessage && (
+            <div role="alert" className="mb-4 flex items-center gap-2 rounded-xl bg-bad/10 px-3.5 py-3 text-[13px] text-bad">
+              <AlertCircle size={15} className="flex-shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+          {successMessage && (
+            <div role="status" className="mb-4 flex items-center gap-2 rounded-xl bg-ok/10 px-3.5 py-3 text-[13px] text-ok">
+              <CheckCircle2 size={15} className="flex-shrink-0" />
+              <span>{successMessage}</span>
+            </div>
+          )}
+
+          <form onSubmit={mode === "login" ? handleLoginSubmit : handleSignUpSubmit} className="flex flex-col gap-4">
+            {mode === "signup" && (
+              <div>
+                <label htmlFor="auth-name" className={labelCls}>Full name</label>
+                <Input id="auth-name" type="text" placeholder="Eleanor Vance" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} className={inputCls} required />
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="auth-email" className={labelCls}>Email</label>
+              <Input id="auth-email" type="email" placeholder="you@university.edu" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} required />
+            </div>
+
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label htmlFor="auth-password" className="text-[13px] font-medium text-ink-soft">Password</label>
+                {mode === "login" && (
+                  <Dialog>
+                    <DialogTrigger type="button" className="text-[12.5px] font-medium text-ink-faint transition-colors hover:text-ink">
+                      Forgot password?
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-[400px]">
+                      <DialogTitle>Reset your password</DialogTitle>
+                      <DialogDescription className="mt-1.5 text-[13.5px] text-ink-soft">
+                        Enter your email and we will send you a secure sign-in link.
+                      </DialogDescription>
+                      {forgotSuccess ? (
+                        <div className="mt-5 flex items-center gap-2 rounded-xl bg-ok/10 p-3 text-[13px] text-ok">
+                          <CheckCircle2 size={15} />
+                          <span>Link sent. Check your inbox.</span>
+                        </div>
+                      ) : (
+                        <form onSubmit={handleForgotSubmit} className="mt-5 flex flex-col gap-3">
+                          <Input type="email" placeholder="you@university.edu" aria-label="Email" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} className={inputCls} required />
+                          <button
+                            type="submit"
+                            disabled={forgotSubmitting}
+                            className="pressable flex h-11 w-full items-center justify-center rounded-xl bg-primary text-[14px] font-medium text-on-primary disabled:opacity-50"
+                          >
+                            {forgotSubmitting ? <Loader2 size={15} className="animate-spin" /> : "Send reset link"}
+                          </button>
+                        </form>
+                      )}
+                    </DialogContent>
+                  </Dialog>
+                )}
+              </div>
+              <div className="relative">
+                <Input
+                  id="auth-password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder={mode === "login" ? "Your password" : "At least 8 characters"}
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={`${inputCls} pr-11`}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-ink-faint transition-colors hover:text-ink"
+                >
+                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            </div>
+
+            {mode === "signup" && (
+              <div>
+                <label htmlFor="auth-role" className={labelCls}>Role or field</label>
+                <select
+                  id="auth-role"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-[14px] text-ink outline-none transition-[border-color,box-shadow] duration-150 hover:border-line-hover focus:border-accent/60 focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+                >
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={busy}
+              className="pressable group mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[14px] font-medium text-on-primary disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <Loader2 size={15} className="animate-spin" />
+                  {mode === "login" ? "Signing in…" : "Creating account…"}
+                </>
+              ) : (
+                <>
+                  {mode === "login" ? "Sign in" : "Create account"}
+                  <ArrowRight size={15} className="transition-transform duration-200 ease-out group-hover:translate-x-0.5" />
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleInstantDemoLogin}
+              disabled={busy}
+              className="pressable flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-line text-[13.5px] font-medium text-ink-soft hover:border-line-hover hover:text-ink disabled:opacity-50"
+            >
+              {demoLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+              Continue with the demo account
+            </button>
+          </form>
+
+          <p className="mt-8 text-center text-[13.5px] text-ink-soft">
+            {mode === "login" ? "New to CogNexa? " : "Already have an account? "}
+            <button
+              type="button"
+              onClick={() => switchMode(mode === "login" ? "signup" : "login")}
+              className="font-medium text-ink underline decoration-line-hover underline-offset-4 transition-colors hover:decoration-ink"
+            >
+              {mode === "login" ? "Create an account" : "Sign in"}
+            </button>
           </p>
         </div>
 
-        {/* 1-Click Instant Demo Button */}
-        <div className="mt-6">
-          <button
-            type="button"
-            onClick={handleInstantDemoLogin}
-            disabled={demoLoading || loading}
-            className="group relative flex w-full items-center justify-center gap-2 rounded-2xl border border-rose/30 bg-blush/40 py-2.5 px-4 text-xs font-semibold text-rose transition-all hover:bg-blush hover:shadow-sm active:scale-[0.99] disabled:opacity-60"
-          >
-            {demoLoading ? (
-              <Loader2 size={14} className="animate-spin text-rose" />
-            ) : (
-              <Zap size={14} className="fill-rose text-rose transition-transform group-hover:scale-110" />
-            )}
-            <span>1-Click Demo Login · Dr. Alex Morgan</span>
-          </button>
-        </div>
-
-        {/* Divider */}
-        <div className="relative my-5 flex items-center justify-center">
-          <div className="w-full border-t border-line" />
-          <span className="absolute bg-surface px-3 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
-            or sign in with
-          </span>
-        </div>
-
-        {/* Quick Social Buttons */}
-        <div className="grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={() => handleSocialAuth("Google")}
-            disabled={socialLoading !== null}
-            className="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-line bg-surface2/60 text-xs font-medium text-ink-soft transition-all hover:bg-surface2 hover:text-ink active:scale-95 disabled:opacity-60"
-          >
-            {socialLoading === "Google" ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                />
-              </svg>
-            )}
-            Google
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleSocialAuth("GitHub")}
-            disabled={socialLoading !== null}
-            className="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-line bg-surface2/60 text-xs font-medium text-ink-soft transition-all hover:bg-surface2 hover:text-ink active:scale-95 disabled:opacity-60"
-          >
-            {socialLoading === "GitHub" ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 24 24">
-                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
-              </svg>
-            )}
-            GitHub
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleSocialAuth("ORCID")}
-            disabled={socialLoading !== null}
-            className="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-line bg-surface2/60 text-xs font-medium text-ink-soft transition-all hover:bg-surface2 hover:text-ink active:scale-95 disabled:opacity-60"
-          >
-            {socialLoading === "ORCID" ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <span className="font-bold text-ok text-[11px]">iD</span>
-            )}
-            ORCID
-          </button>
-        </div>
-
-        {/* Feedback Alerts */}
-        {errorMessage && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl bg-bad/10 px-3 py-2.5 text-xs text-bad">
-            <AlertCircle size={14} className="flex-shrink-0" />
-            <span>{errorMessage}</span>
-          </div>
-        )}
-
-        {successMessage && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl bg-ok/10 px-3 py-2.5 text-xs text-ok">
-            <CheckCircle2 size={14} className="flex-shrink-0" />
-            <span>{successMessage}</span>
-          </div>
-        )}
-
-        {/* Email/Password Form */}
-        {mode === "login" ? (
-          <form onSubmit={handleLoginSubmit} className="mt-5 flex flex-col gap-3.5">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-ink-soft">Work / Academic Email</label>
-              <div className="relative">
-                <Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint" />
-                <Input
-                  type="email"
-                  placeholder="alex.morgan@stanford.edu"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-10 pl-9 pr-3 text-xs sm:text-[13px] bg-surface border-line rounded-xl"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-1 flex items-center justify-between">
-                <label className="text-xs font-medium text-ink-soft">Password</label>
-                <Dialog>
-                  <DialogTrigger type="button" className="text-[11px] text-rose hover:underline">
-                    Forgot password?
-                  </DialogTrigger>
-                  <DialogContent className="sm:max-w-[380px] p-6 rounded-2xl">
-                    <DialogTitle className="font-serif text-lg font-semibold text-ink">Reset password</DialogTitle>
-                    <DialogDescription className="mt-1 text-xs text-ink-soft">
-                      Enter your academic email address and we will send you a secure login link.
-                    </DialogDescription>
-                    {forgotSuccess ? (
-                      <div className="mt-4 flex items-center gap-2 rounded-xl bg-ok/10 p-3 text-xs text-ok">
-                        <CheckCircle2 size={14} />
-                        <span>Reset link sent! Check your inbox shortly.</span>
-                      </div>
-                    ) : (
-                      <form onSubmit={handleForgotSubmit} className="mt-4 flex flex-col gap-3">
-                        <Input
-                          type="email"
-                          placeholder="user@stanford.edu"
-                          value={forgotEmail}
-                          onChange={(e) => setForgotEmail(e.target.value)}
-                          className="h-10 text-xs"
-                          required
-                        />
-                        <button
-                          type="submit"
-                          disabled={forgotSubmitting}
-                          className="mt-1 flex h-10 w-full items-center justify-center rounded-xl bg-rose text-xs font-medium text-white shadow-sm hover:bg-rose/90 disabled:opacity-60"
-                        >
-                          {forgotSubmitting ? <Loader2 size={14} className="animate-spin" /> : "Send Reset Link"}
-                        </button>
-                      </form>
-                    )}
-                  </DialogContent>
-                </Dialog>
-              </div>
-
-              <div className="relative">
-                <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint" />
-                <Input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="••••••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="h-10 pl-9 pr-9 text-xs sm:text-[13px] bg-surface border-line rounded-xl"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-faint hover:text-ink transition-colors"
-                >
-                  {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-            </div>
-
-            {/* Primary Submit Button — Solid Rose, High Contrast, Guaranteed Legibility */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-rose px-4 text-xs sm:text-[13px] font-semibold text-white shadow-panel transition-all hover:bg-rose/90 hover:shadow-panel-hover active:scale-[0.99] disabled:opacity-60"
-            >
-              {loading ? (
-                <>
-                  <Loader2 size={15} className="animate-spin" />
-                  <span>Signing in...</span>
-                </>
-              ) : (
-                <>
-                  <span>Sign In</span>
-                  <ArrowRight size={15} />
-                </>
-              )}
-            </button>
-          </form>
-        ) : (
-          /* Sign Up Form */
-          <form onSubmit={handleSignUpSubmit} className="mt-5 flex flex-col gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-ink-soft">Full Name</label>
-              <div className="relative">
-                <User size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint" />
-                <Input
-                  type="text"
-                  placeholder="Dr. Eleanor Vance"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="h-10 pl-9 text-xs bg-surface border-line rounded-xl"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-ink-soft">Academic / Work Email</label>
-              <div className="relative">
-                <Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint" />
-                <Input
-                  type="email"
-                  placeholder="e.vance@mit.edu"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-10 pl-9 text-xs bg-surface border-line rounded-xl"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-ink-soft">Password</label>
-              <div className="relative">
-                <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint" />
-                <Input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="At least 8 characters"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="h-10 pl-9 pr-9 text-xs bg-surface border-line rounded-xl"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-faint hover:text-ink"
-                >
-                  {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-ink-soft">Role / Field</label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-rose"
-              >
-                {ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-rose px-4 text-xs sm:text-[13px] font-semibold text-white shadow-panel transition-all hover:bg-rose/90 hover:shadow-panel-hover active:scale-[0.99] disabled:opacity-60"
-            >
-              {loading ? (
-                <>
-                  <Loader2 size={15} className="animate-spin" />
-                  <span>Creating account...</span>
-                </>
-              ) : (
-                <>
-                  <span>Create Account</span>
-                  <ArrowRight size={15} />
-                </>
-              )}
-            </button>
-          </form>
-        )}
-
-        {/* Switch Mode Footer */}
-        <div className="mt-6 text-center text-xs text-ink-soft">
-          {mode === "login" ? (
-            <p>
-              New to CogNexa?{" "}
-              <button
-                type="button"
-                onClick={() => {
-                  setErrorMessage(null);
-                  setSuccessMessage(null);
-                  setMode("signup");
-                }}
-                className="font-semibold text-rose hover:underline"
-              >
-                Create an account
-              </button>
-            </p>
-          ) : (
-            <p>
-              Already have an account?{" "}
-              <button
-                type="button"
-                onClick={() => {
-                  setErrorMessage(null);
-                  setSuccessMessage(null);
-                  setMode("login");
-                }}
-                className="font-semibold text-rose hover:underline"
-              >
-                Sign in
-              </button>
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Subtle Bottom Trust note */}
-      <div className="relative z-10 mt-6 text-center text-[11px] text-ink-faint">
-        Dual-mode autonomous research engine · Verifiable citations
-      </div>
+        <p className="text-center text-[12px] text-ink-faint">Every answer links back to its sources.</p>
+      </section>
     </div>
   );
 }

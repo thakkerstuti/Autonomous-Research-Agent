@@ -2,8 +2,8 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import {
-  UploadCloud, FileText, AlertCircle, Loader2, CheckCircle,
-  BookOpen, FileSearch, Brain, StickyNote, GitCompare, Lightbulb,
+  UploadCloud, FileText, AlertCircle, Loader2, Check,
+  FileSearch, Brain, StickyNote, GitCompare, Lightbulb, ArrowLeft, ArrowRight,
 } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api";
@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { FloatingPanel, PanelType } from "@/components/ui/floating-panel";
 import { ResearchCanvas } from "@/components/ui/research-canvas";
 import { spreadLayout } from "@/lib/canvas-layout";
+import { NeuralThinking } from "@/components/neural/neural-thinking";
+import { cn } from "@/lib/utils";
 
 type Step = "upload" | "level" | "processing" | "done";
 type Level = "Beginner" | "Medium" | "Pro";
@@ -111,7 +113,7 @@ function markdownToHtml(content: string) {
   return content
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/^> (.+)/gm, '<blockquote class="border-l-2 border-blush-deep pl-3 italic text-ink-faint">$1</blockquote>')
+    .replace(/^> (.+)/gm, '<blockquote class="border-l border-accent-line pl-3 italic text-ink-faint">$1</blockquote>')
     .replace(/\n/g, "<br/>");
 }
 
@@ -132,26 +134,26 @@ function buildSpread(
 }
 
 function PanelAdder({ onAdd }: { onAdd: (type: PanelType) => void }) {
-  const panelTypes: { type: PanelType; icon: React.ElementType; label: string; color: string }[] = [
-    { type: "summary", icon: FileSearch, label: "Summary", color: "var(--rose)" },
-    { type: "concept", icon: Brain, label: "Concept", color: "var(--lavender)" },
-    { type: "evidence", icon: FileText, label: "Evidence", color: "var(--warn)" },
-    { type: "notes", icon: StickyNote, label: "Notes", color: "var(--ok)" },
-    { type: "comparison", icon: GitCompare, label: "Compare", color: "var(--lavender)" },
-    { type: "insight", icon: Lightbulb, label: "Insight", color: "var(--rose)" },
+  const panelTypes: { type: PanelType; icon: React.ElementType; label: string }[] = [
+    { type: "summary", icon: FileSearch, label: "Summary" },
+    { type: "concept", icon: Brain, label: "Concept" },
+    { type: "evidence", icon: FileText, label: "Evidence" },
+    { type: "notes", icon: StickyNote, label: "Notes" },
+    { type: "comparison", icon: GitCompare, label: "Compare" },
+    { type: "insight", icon: Lightbulb, label: "Insight" },
   ];
 
   return (
-    <div className="hud-dock absolute top-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-2xl px-3 py-2">
-      <span className="mr-1 hidden text-[11px] text-ink-faint sm:inline">Add</span>
-      {panelTypes.map(({ type, icon: Icon, label, color }) => (
+    <div className="hud-dock absolute left-1/2 top-4 flex -translate-x-1/2 items-center gap-0.5 rounded-2xl p-1">
+      <span className="hidden px-2.5 text-[12px] text-ink-faint sm:inline">Add</span>
+      {panelTypes.map(({ type, icon: Icon, label }) => (
         <button
           key={type}
           onClick={() => onAdd(type)}
-          title={`Add ${label} panel`}
-          className="flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-[12px] font-medium text-ink-soft transition-all hover:bg-blush hover:text-rose"
+          aria-label={`Add ${label} panel`}
+          className="pressable flex h-8 items-center gap-1.5 rounded-xl px-2.5 text-[12.5px] font-medium text-ink-soft hover:bg-surface2 hover:text-ink"
         >
-          <Icon size={13} style={{ color }} />
+          <Icon size={14} strokeWidth={1.75} />
           <span className="hidden md:inline">{label}</span>
         </button>
       ))}
@@ -169,8 +171,8 @@ function PageRail({
   onOpenFive: () => void;
 }) {
   return (
-    <div className="hud-dock absolute left-3 top-1/2 flex max-h-[70vh] w-[72px] -translate-y-1/2 flex-col items-center gap-2 overflow-y-auto rounded-2xl px-2 py-3 sm:w-[88px]">
-      <span className="text-[9px] uppercase tracking-[0.16em] text-ink-faint">Pages</span>
+    <div className="hud-dock absolute left-3 top-1/2 flex max-h-[70vh] w-[64px] -translate-y-1/2 flex-col items-center gap-1.5 overflow-y-auto rounded-2xl p-1.5">
+      <span className="py-1 text-[10.5px] font-medium text-ink-faint">Pages</span>
       {PAGE_BANK.map((p) => {
         const n = p.title.match(/\d+/)?.[0] ?? "";
         const open = openIds.has(p.id);
@@ -178,21 +180,22 @@ function PageRail({
           <button
             key={p.id}
             onClick={() => onToggle(p.id)}
-            className={`flex h-11 w-11 flex-col items-center justify-center rounded-xl text-[11px] font-medium transition-all ${
-              open ? "bg-rose text-white shadow-panel" : "bg-surface2 text-ink-soft hover:bg-blush hover:text-rose"
-            }`}
-            title={p.title}
+            aria-pressed={open}
+            aria-label={p.title}
+            className={cn(
+              "pressable mono flex h-11 w-11 items-center justify-center rounded-xl text-[13px]",
+              open ? "bg-primary text-on-primary" : "bg-surface2 text-ink-soft hover:bg-surface3 hover:text-ink"
+            )}
           >
-            <span className="text-[9px] uppercase tracking-wider opacity-80">p</span>
             {n}
           </button>
         );
       })}
       <button
         onClick={onOpenFive}
-        className="mt-1 w-full rounded-xl bg-blush px-1 py-2 text-[10px] font-medium leading-tight text-rose hover:bg-blush-deep"
+        className="pressable mt-1 w-full rounded-xl bg-accent-soft px-1 py-2 text-[10.5px] font-medium leading-tight text-accent hover:bg-accent/15"
       >
-        Open 5 together
+        Open all
       </button>
     </div>
   );
@@ -378,7 +381,7 @@ function CanvasWorkspace() {
             onFocus={bringToFront}
           >
             <div
-              className="text-[13px] leading-relaxed text-ink-soft"
+              className="text-[13.5px] leading-[1.65] text-ink-soft [&_strong]:font-semibold [&_strong]:text-ink"
               dangerouslySetInnerHTML={{ __html: markdownToHtml(panel.content) }}
             />
           </FloatingPanel>
@@ -390,39 +393,50 @@ function CanvasWorkspace() {
 
 function UploadStep({ onFile, error }: { onFile: (f: File, pages: number) => void; error: string | null }) {
   const [dragOver, setDragOver] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   const read = async (f: File) => {
-    if (f.type !== "application/pdf") return;
+    setLocalError(null);
+    if (f.type !== "application/pdf") {
+      setLocalError("That file isn't a PDF. Choose a .pdf file to study.");
+      return;
+    }
+    setReading(true);
     try {
       const { pdfjs } = await import("react-pdf");
       pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
       const buf = await f.arrayBuffer();
       const doc = await pdfjs.getDocument({ data: buf }).promise;
       onFile(f, doc.numPages);
-    } catch {}
+    } catch {
+      setLocalError("We couldn't read that PDF. It may be encrypted or damaged.");
+    } finally {
+      setReading(false);
+    }
   };
 
+  const shownError = localError ?? error;
+
   return (
-    <div className="relative flex h-full flex-col items-center justify-center overflow-hidden p-6 sm:p-10">
-      <div className="aurora aurora-a" />
-      <div className="aurora aurora-b" />
-      <div className="relative w-full max-w-lg animate-fade-up text-center">
-        <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-blush-deep bg-blush/50 px-4 py-1.5">
-          <BookOpen size={13} className="text-rose" />
-          <span className="text-[12px] font-medium text-rose">Paper Study</span>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto flex min-h-full max-w-[640px] flex-col justify-center px-5 py-12 sm:px-7">
+        <div className="animate-view-in">
+          <h1 className="font-serif text-display-xl font-normal text-ink">
+            Spread the paper on a desk.
+          </h1>
+          <span className="accent-rule mt-6" />
+          <p className="mt-4 max-w-[50ch] text-[15px] leading-relaxed text-ink-soft">
+            Open several page summaries at once, drag them side by side, resize any edge and keep the whole argument in view.
+          </p>
         </div>
-        <h1 className="mt-4 font-serif text-3xl font-normal text-ink sm:text-4xl">
-          Spread the paper on a{" "}
-          <span className="text-gradient-rose">living desk.</span>
-        </h1>
-        <p className="mt-3 text-[14px] text-ink-soft">
-          Open four or five page summaries at once. Drag them with your hand, pinch to resize, and keep the argument in view.
-        </p>
 
         <label
-          className={`mt-8 flex cursor-pointer flex-col items-center gap-4 rounded-3xl border-2 border-dashed p-10 transition-all duration-200 sm:p-12 ${
-            dragOver ? "border-rose bg-blush/40 scale-[1.01]" : "border-line bg-surface/80 hover:border-rose/60 hover:bg-blush/20"
-          }`}
+          className={cn(
+            "animate-view-in group relative mt-10 flex cursor-pointer flex-col items-center gap-4 overflow-hidden rounded-[22px] border border-dashed px-6 py-14 text-center transition-[border-color,background-color,transform] duration-200 ease-out",
+            dragOver ? "scale-[1.01] border-accent bg-accent-soft" : "border-line-hover bg-surface hover:border-ink-faint/50"
+          )}
+          style={{ animationDelay: "80ms" }}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => {
@@ -432,32 +446,40 @@ function UploadStep({ onFile, error }: { onFile: (f: File, pages: number) => voi
             if (f) read(f);
           }}
         >
-          <div className={`rounded-2xl p-4 transition-all ${dragOver ? "bg-rose/20 text-rose" : "bg-surface2 text-ink-faint"}`}>
-            <UploadCloud size={28} />
-          </div>
-          <div>
-            <span className="block text-[15px] font-medium text-ink">Drop a PDF here, or click to choose</span>
-            <span className="block mt-1 text-[13px] text-ink-faint">Up to 100 MB · Text and scanned papers</span>
-          </div>
+          <span
+            className={cn(
+              "flex h-12 w-12 items-center justify-center rounded-2xl transition-colors duration-200",
+              dragOver ? "bg-accent text-on-primary" : "bg-surface3 text-ink-soft group-hover:text-ink"
+            )}
+          >
+            {reading ? <Loader2 size={20} className="animate-spin" /> : <UploadCloud size={20} strokeWidth={1.75} />}
+          </span>
+          <span>
+            <span className="block text-[15px] font-medium text-ink">
+              {reading ? "Reading the PDF…" : dragOver ? "Drop to open" : "Drop a PDF here, or click to choose"}
+            </span>
+            <span className="mt-1 block text-[13px] text-ink-faint">Up to 100 MB · text or scanned papers</span>
+          </span>
           <input
             type="file"
             accept="application/pdf"
-            className="hidden"
+            className="sr-only"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) read(f); }}
           />
         </label>
 
-        {error && (
-          <div className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-bad/10 px-4 py-3 text-[13px] text-bad">
-            <AlertCircle size={14} /> {error}
+        {shownError && (
+          <div role="alert" className="mt-4 flex items-center gap-2 rounded-xl bg-bad/10 px-4 py-3 text-[13px] text-bad">
+            <AlertCircle size={15} className="flex-shrink-0" /> {shownError}
           </div>
         )}
 
         <button
           onClick={() => onFile(new File([], "demo-paper.pdf", { type: "application/pdf" }), 50)}
-          className="mt-6 text-[13px] text-ink-faint underline underline-offset-2 hover:text-rose transition-colors"
+          className="group mt-6 inline-flex items-center gap-1.5 self-start text-[13.5px] font-medium text-ink-soft transition-colors hover:text-ink"
         >
-          Open the demo canvas with 5 pages →
+          Or open the demo canvas
+          <ArrowRight size={14} className="transition-transform duration-200 ease-out group-hover:translate-x-0.5" />
         </button>
       </div>
     </div>
@@ -470,69 +492,60 @@ function LevelCard({
   return (
     <button
       onClick={onClick}
-      className={`relative rounded-2xl border p-5 text-left transition-all duration-200 ${
-        selected ? "border-rose bg-blush/40 shadow-sm" : "border-line bg-surface hover:border-rose/50 hover:bg-blush/10"
-      }`}
+      role="radio"
+      aria-checked={selected}
+      className={cn(
+        "pressable relative rounded-2xl bg-surface p-5 text-left",
+        selected ? "shadow-[0_0_0_1.5px_rgb(var(--accent))]" : "shadow-sm hover:shadow-panel"
+      )}
     >
-      {selected && <span className="absolute right-4 top-4 text-rose"><CheckCircle size={16} /></span>}
-      <div className={`mb-2 text-[14px] font-semibold ${selected ? "text-rose" : "text-ink"}`}>{title}</div>
-      <p className="text-[13px] text-ink-soft leading-relaxed">{desc}</p>
+      <span
+        className={cn(
+          "absolute right-4 top-4 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-on-primary transition-[transform,opacity] duration-200 ease-out",
+          selected ? "scale-100 opacity-100" : "scale-75 opacity-0"
+        )}
+      >
+        <Check size={12} strokeWidth={2.5} />
+      </span>
+      <div className="mb-1.5 text-[14px] font-semibold text-ink">{title}</div>
+      <p className="text-[13px] leading-relaxed text-ink-soft">{desc}</p>
     </button>
   );
 }
 
 function ProcessingStep({ paperId, onDone }: { paperId: string; onDone: () => void }) {
-  const [progress, setProgress] = useState({ done: 0, total: 0, failed: 0 });
+  const [progress] = useState({ done: 0, total: 0, failed: 0 });
 
   useEffect(() => {
     if (paperId === "demo") {
-      const t = setTimeout(onDone, 1600);
+      const t = setTimeout(onDone, 2600);
       return () => clearTimeout(t);
     }
   }, [paperId, onDone]);
 
-  if (paperId === "demo") {
-    return (
-      <div className="relative flex h-full flex-col items-center justify-center gap-6 overflow-hidden p-10">
-        <div className="aurora aurora-a" />
-        <div className="h-14 w-14 rounded-2xl bg-blush flex items-center justify-center">
-          <Loader2 size={24} className="animate-spin text-rose" />
-        </div>
-        <div className="text-center">
-          <h2 className="font-serif text-2xl text-ink">Spreading five pages…</h2>
-          <p className="mt-1 text-[14px] text-ink-soft">Summaries will sit together so you can read them as one argument</p>
-        </div>
-        <div className="w-72 h-1.5 rounded-full bg-surface2 overflow-hidden">
-          <div className="h-full w-full rounded-full bg-gradient-rose animate-[grow_1.6s_ease-out_forwards]" />
-        </div>
-      </div>
-    );
-  }
+  const isDemo = paperId === "demo";
+  const detail = isDemo
+    ? "Laying five page summaries side by side"
+    : progress.total > 0
+      ? `Summarised ${Math.min(progress.done + progress.failed, progress.total)} of ${progress.total} pages`
+      : "Extracting pages and writing summaries";
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-6 p-10">
-      <div className="h-14 w-14 rounded-2xl bg-blush flex items-center justify-center">
-        <Loader2 size={24} className="animate-spin text-rose" />
-      </div>
-      <div className="text-center">
-        <h2 className="font-serif text-2xl text-ink">Analyzing document…</h2>
-        <p className="mt-1 text-[14px] text-ink-soft">
-          {progress.total > 0
-            ? `Summarized ${Math.min(progress.done + progress.failed, progress.total)} of ${progress.total} pages`
-            : "Extracting pages…"}
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto flex min-h-full max-w-[680px] flex-col justify-center px-5 py-12 sm:px-7">
+        <h1 className="animate-view-in font-serif text-display font-normal text-ink">
+          {isDemo ? "Spreading the pages…" : "Reading your paper…"}
+        </h1>
+        <p className="animate-view-in mt-3 text-[15px] text-ink-soft" style={{ animationDelay: "60ms" }}>
+          Summaries will sit together so you can read them as one argument.
         </p>
+        <NeuralThinking
+          className="animate-view-in mt-8"
+          label={isDemo ? "Preparing canvas" : "Analysing"}
+          detail={detail}
+          height={300}
+        />
       </div>
-      {progress.total > 0 && (
-        <div className="w-72 h-1.5 rounded-full bg-surface2 overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all duration-500"
-            style={{
-              width: `${Math.min(100, ((progress.done + progress.failed) / progress.total) * 100)}%`,
-              background: "linear-gradient(90deg, var(--rose), var(--lavender))",
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 }
@@ -570,61 +583,55 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
   };
 
   if (step === "upload") {
-    return (
-      <div className="h-full bg-bg">
-        <UploadStep onFile={handleFile} error={error} />
-      </div>
-    );
+    return <UploadStep onFile={handleFile} error={error} />;
   }
 
   if (step === "level" && file) {
     return (
-      <div className="flex h-full flex-col items-center justify-center bg-bg p-6 sm:p-10">
-        <div className="w-full max-w-xl animate-fade-up">
-          <div className="mb-6 flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-blush text-rose">
-              <FileText size={18} />
-            </div>
-            <div>
-              <div className="text-[14px] font-medium text-ink truncate max-w-xs">{file.name}</div>
-              <div className="text-[12px] text-ink-faint">{pageCount} pages · {(file.size / 1024 / 1024).toFixed(1)} MB</div>
+      <div className="h-full overflow-y-auto">
+        <div className="mx-auto flex min-h-full max-w-[680px] flex-col justify-center px-5 py-12 sm:px-7">
+          <div className="animate-view-in flex items-center gap-3 rounded-2xl bg-surface p-3.5 shadow-sm">
+            <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-surface3 text-ink-soft">
+              <FileText size={18} strokeWidth={1.75} />
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-[14px] font-medium text-ink">{file.name}</div>
+              <div className="mono text-[12px] text-ink-faint">
+                {pageCount} pages · {(file.size / 1024 / 1024).toFixed(1)} MB
+              </div>
             </div>
           </div>
 
-          <h2 className="font-serif text-2xl text-ink mb-1">How should Cognexa explain?</h2>
-          <p className="text-[14px] text-ink-soft mb-6">Choose the level of detail that fits your background.</p>
+          <h2 className="animate-view-in mt-10 font-serif text-display font-normal text-ink" style={{ animationDelay: "60ms" }}>
+            How should CogNexa explain it?
+          </h2>
+          <p className="animate-view-in mt-2 text-[15px] text-ink-soft" style={{ animationDelay: "60ms" }}>
+            Pick the depth that fits your background.
+          </p>
 
-          <div className="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div role="radiogroup" aria-label="Explanation level" className="animate-view-in mt-7 grid grid-cols-1 gap-3 sm:grid-cols-3" style={{ animationDelay: "120ms" }}>
             <LevelCard title="Beginner" desc="Plain language, every term explained, simple analogies." selected={level === "Beginner"} onClick={() => setLevel("Beginner")} />
-            <LevelCard title="Medium" desc="Assumes basic knowledge. Focuses on the 'why'." selected={level === "Medium"} onClick={() => setLevel("Medium")} />
+            <LevelCard title="Medium" desc="Assumes the basics. Focuses on the why." selected={level === "Medium"} onClick={() => setLevel("Medium")} />
             <LevelCard title="Pro" desc="Concise and technical. Contribution and results." selected={level === "Pro"} onClick={() => setLevel("Pro")} />
           </div>
 
-          <div className="flex gap-3">
-            <Button variant="ghost" onClick={() => setStep("upload")} disabled={uploadMutation.isPending} className="flex-1">
-              Back
+          <div className="mt-10 flex items-center justify-between gap-3">
+            <Button variant="ghost" onClick={() => setStep("upload")} disabled={uploadMutation.isPending}>
+              <ArrowLeft size={15} /> Back
             </Button>
-            <button
-              onClick={() => uploadMutation.mutate()}
-              disabled={uploadMutation.isPending}
-              className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-rose px-6 py-3 text-[14px] font-medium text-white shadow-sm transition-all hover:bg-rose/90 hover:shadow-panel disabled:opacity-60"
-            >
+            <Button size="lg" onClick={() => uploadMutation.mutate()} disabled={uploadMutation.isPending}>
               {uploadMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : null}
-              Begin Study Session
-            </button>
+              Begin study session
+            </Button>
           </div>
-          {error && <div className="mt-4 text-[13px] text-bad text-center">{error}</div>}
+          {error && <div role="alert" className="mt-4 rounded-xl bg-bad/10 px-4 py-3 text-[13px] text-bad">{error}</div>}
         </div>
       </div>
     );
   }
 
   if (step === "processing" && paperId) {
-    return (
-      <div className="h-full bg-bg">
-        <ProcessingStep paperId={paperId} onDone={() => setStep("done")} />
-      </div>
-    );
+    return <ProcessingStep paperId={paperId} onDone={() => setStep("done")} />;
   }
 
   if (step === "done" && paperId) {

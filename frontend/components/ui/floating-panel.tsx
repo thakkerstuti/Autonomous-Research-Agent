@@ -20,14 +20,14 @@ interface PanelConfig {
 }
 
 const PANEL_CONFIGS: Record<PanelType, PanelConfig> = {
-  paper:      { color: "var(--teal)",     label: "Paper" },
-  summary:    { color: "var(--rose)",     label: "Summary" },
-  concept:    { color: "var(--lavender)", label: "Concept" },
-  evidence:   { color: "var(--warn)",     label: "Evidence" },
-  notes:      { color: "var(--ok)",       label: "Notes" },
-  comparison: { color: "var(--lavender)", label: "Compare" },
-  insight:    { color: "var(--rose)",     label: "Insight" },
-  research:   { color: "var(--teal)",     label: "Research" },
+  paper:      { color: "rgb(var(--steel))",  label: "Paper" },
+  summary:    { color: "rgb(var(--accent))", label: "Summary" },
+  concept:    { color: "rgb(var(--steel))",  label: "Concept" },
+  evidence:   { color: "rgb(var(--warn))",   label: "Evidence" },
+  notes:      { color: "rgb(var(--ok))",     label: "Notes" },
+  comparison: { color: "rgb(var(--steel))",  label: "Compare" },
+  insight:    { color: "rgb(var(--accent))", label: "Insight" },
+  research:   { color: "rgb(var(--steel))",  label: "Research" },
 };
 
 type ResizeEdge = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
@@ -259,41 +259,32 @@ export function FloatingPanel({
       onPointerUp={onPanelPointerUp}
       onPointerCancel={onPanelPointerUp}
     >
-      <div
-        className="h-[3px] w-full flex-shrink-0"
-        style={{ background: `linear-gradient(90deg, ${config.color}, var(--lavender), var(--teal))` }}
-      />
-
       <div className="panel-header" onPointerDown={onHeaderPointerDown}>
-        <span
-          className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white"
-          style={{ backgroundColor: config.color }}
-        >
-          {config.label}
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-[13px] font-medium leading-tight text-ink">{title}</span>
-          {subtitle && (
-            <span className="truncate text-[11px] text-ink-faint leading-tight">{subtitle}</span>
-          )}
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-ink-faint">
+            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: config.color }} />
+            {config.label}
+            {subtitle && <span className="truncate">· {subtitle}</span>}
+          </span>
+          <span className="truncate text-[13.5px] font-semibold leading-tight tracking-[-0.01em] text-ink">{title}</span>
         </div>
-        <div className="flex flex-shrink-0 items-center gap-0.5 ml-1">
+        <div className="flex flex-shrink-0 items-center">
           <button
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setMinimized((v) => !v)}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface3 hover:text-ink-soft"
-            title={minimized ? "Expand" : "Minimise"}
+            className="pressable flex h-7 w-7 items-center justify-center rounded-lg text-ink-faint hover:bg-surface2 hover:text-ink"
+            aria-label={minimized ? "Expand panel" : "Collapse panel"}
           >
-            {minimized ? <Maximize2 size={12} /> : <Minus size={12} />}
+            {minimized ? <Maximize2 size={12} /> : <Minus size={13} />}
           </button>
           {onClose && (
             <button
               onPointerDown={(e) => e.stopPropagation()}
               onClick={() => onClose(id)}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-bad/10 hover:text-bad"
-              title="Close"
+              className="pressable flex h-7 w-7 items-center justify-center rounded-lg text-ink-faint hover:bg-bad/10 hover:text-bad"
+              aria-label="Close panel"
             >
-              <X size={12} />
+              <X size={13} />
             </button>
           )}
         </div>

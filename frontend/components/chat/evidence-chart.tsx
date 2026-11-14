@@ -1,36 +1,27 @@
 "use client";
 
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { EvidenceSource } from "@/lib/types";
 
+/** Confidence per source as quiet horizontal meters: one hue, value carried by length. */
 export function EvidenceChart({ sources }: { sources: EvidenceSource[] }) {
-  const data = sources.map((s) => ({ name: s.domain, confidence: s.confidence, color: s.color }));
+  const sorted = [...sources].sort((a, b) => b.confidence - a.confidence);
 
   return (
-    <div className="h-40 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} layout="vertical" margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
-          <XAxis type="number" domain={[0, 100]} hide />
-          <YAxis
-            type="category"
-            dataKey="name"
-            width={90}
-            tick={{ fill: "var(--ink-soft)", fontSize: 12 }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <Tooltip
-            cursor={{ fill: "rgba(255,255,255,0.04)" }}
-            contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: 8, fontSize: 12 }}
-            formatter={(value: number) => [`${value}%`, "Confidence"]}
-          />
-          <Bar dataKey="confidence" radius={4} barSize={12}>
-            {data.map((d, i) => (
-              <Cell key={i} fill={d.color} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
+    <ul className="flex flex-col gap-2.5">
+      {sorted.map((s, i) => (
+        <li key={`${s.domain}-${i}`} className="grid grid-cols-[minmax(0,140px)_1fr_40px] items-center gap-3">
+          <span className="truncate text-[12.5px] text-ink-soft" title={s.name || s.domain}>
+            {s.domain}
+          </span>
+          <span className="h-1.5 overflow-hidden rounded-full bg-surface3">
+            <span
+              className="block h-full rounded-full bg-accent"
+              style={{ width: `${Math.max(2, Math.min(100, s.confidence))}%`, opacity: 0.45 + (s.confidence / 100) * 0.55 }}
+            />
+          </span>
+          <span className="mono text-right text-[12px] text-ink">{Math.round(s.confidence)}%</span>
+        </li>
+      ))}
+    </ul>
   );
 }

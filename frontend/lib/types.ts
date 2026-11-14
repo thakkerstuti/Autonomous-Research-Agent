@@ -47,6 +47,10 @@ export interface ChatMessage {
   sources?: EvidenceSource[];
   answer?: string;
   status: "pending" | "streaming" | "done";
+  /** Structured view of the same backend response, for presentation only. */
+  view?: import("./research-view").ResearchView;
+  /** When the request started, for the live run timer. */
+  startedAt?: number;
 }
 
 export interface SessionSummary {

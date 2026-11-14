@@ -5,17 +5,27 @@ import { useRouter } from "next/navigation";
 import { useUiStore } from "@/lib/store";
 import { useUsageQuery } from "@/lib/queries";
 import { ModelPreference } from "@/lib/types";
-import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { LogOut, CheckCircle2 } from "lucide-react";
+import { LogOut, Check } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const models: { value: ModelPreference; title: string; body: string }[] = [
   { value: "fast", title: "Fast", body: "Quicker answers, lighter checking. Good for quick lookups." },
-  { value: "balanced", title: "Balanced", body: "Default. Solid depth with reasonable wait times." },
-  { value: "deep", title: "Deep", body: "Most thorough evidence gathering and self-critique. Slower." },
+  { value: "balanced", title: "Balanced", body: "Solid depth with reasonable wait times. The default." },
+  { value: "deep", title: "Deep", body: "The most thorough evidence gathering and self-critique. Slower." },
 ];
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-center sm:gap-6">
+      <span className="text-[13px] font-medium text-ink-soft">{label}</span>
+      {children}
+    </label>
+  );
+}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -25,13 +35,13 @@ export default function SettingsPage() {
   const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
   const [role, setRole] = useState(user?.role || "");
-  const [savedMessage, setSavedMessage] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     login({ name, email, role });
-    setSavedMessage(true);
-    setTimeout(() => setSavedMessage(false), 2500);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2200);
   };
 
   const handleLogout = () => {
@@ -40,99 +50,111 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="animate-view-in h-full overflow-y-auto px-10 py-10 relative">
-      <h1 className="font-serif text-2xl font-semibold">Settings</h1>
-      <p className="mb-6 mt-1 max-w-lg text-ink-soft">Account, model preferences, and usage.</p>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-[760px] px-5 pb-16 pt-10 sm:px-10 sm:pt-14">
+        <PageHeader className="animate-view-in" title="Settings" description="Your account, how deep CogNexa digs, and what you've used." />
 
-      <Tabs defaultValue="account" className="max-w-2xl">
-        <TabsList className="mb-6">
-          <TabsTrigger value="account">Account</TabsTrigger>
-          <TabsTrigger value="models">Model preferences</TabsTrigger>
-          <TabsTrigger value="usage">Usage</TabsTrigger>
-        </TabsList>
+        <Tabs defaultValue="account" className="animate-view-in mt-12" style={{ animationDelay: "70ms" }}>
+          <TabsList className="mb-8">
+            <TabsTrigger value="account">Account</TabsTrigger>
+            <TabsTrigger value="models">Model</TabsTrigger>
+            <TabsTrigger value="usage">Usage</TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="account">
-          <Card className="flex flex-col gap-4">
-            {savedMessage && (
-              <div className="flex items-center gap-2 rounded-lg border border-ok/40 bg-ok/10 p-2.5 text-xs text-ok">
-                <CheckCircle2 size={14} /> Profile details saved!
+          <TabsContent value="account">
+            <form onSubmit={handleSave} className="rounded-2xl bg-surface shadow-sm">
+              <div className="grid gap-5 p-6">
+                <Field label="Full name">
+                  <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+                </Field>
+                <Field label="Email">
+                  <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+                </Field>
+                <Field label="Role or field">
+                  <Input value={role} onChange={(e) => setRole(e.target.value)} />
+                </Field>
               </div>
-            )}
-            <form onSubmit={handleSave} className="flex flex-col gap-4">
-              <label className="flex flex-col gap-1.5 text-sm text-ink-soft">
-                Full Name
-                <Input value={name} onChange={(e) => setName(e.target.value)} />
-              </label>
-              <label className="flex flex-col gap-1.5 text-sm text-ink-soft">
-                Email Address
-                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-              </label>
-              <label className="flex flex-col gap-1.5 text-sm text-ink-soft">
-                Role / Field
-                <Input value={role} onChange={(e) => setRole(e.target.value)} />
-              </label>
-              <div className="flex items-center justify-between pt-2 border-t border-line/60">
-                <Button size="sm" type="submit">
-                  Save changes
+              <div className="flex items-center justify-between gap-3 border-t border-line px-6 py-4">
+                <Button type="button" variant="danger" size="sm" onClick={handleLogout}>
+                  <LogOut size={14} /> Sign out
                 </Button>
-                <Button
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                  onClick={handleLogout}
-                  className="border-bad/40 text-bad hover:bg-bad/10"
-                >
-                  <LogOut size={14} /> Sign Out
-                </Button>
+                <div className="flex items-center gap-3">
+                  <span
+                    aria-live="polite"
+                    className={cn(
+                      "flex items-center gap-1.5 text-[12.5px] text-ok transition-[opacity,transform] duration-200 ease-out",
+                      saved ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+                    )}
+                  >
+                    <Check size={14} /> Saved
+                  </span>
+                  <Button size="sm" type="submit">Save changes</Button>
+                </div>
               </div>
             </form>
-          </Card>
-        </TabsContent>
+          </TabsContent>
 
+          <TabsContent value="models">
+            <div role="radiogroup" aria-label="Model preference" className="overflow-hidden rounded-2xl bg-surface shadow-sm">
+              {models.map((m, i) => {
+                const selected = modelPreference === m.value;
+                return (
+                  <button
+                    key={m.value}
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => setModelPreference(m.value)}
+                    className={cn(
+                      "flex w-full items-start gap-4 p-5 text-left transition-colors duration-150 hover:bg-surface2",
+                      i > 0 && "border-t border-line"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "mt-0.5 flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-full border transition-colors duration-150",
+                        selected ? "border-accent bg-accent" : "border-line-hover"
+                      )}
+                    >
+                      <span className={cn("h-1.5 w-1.5 rounded-full bg-on-primary transition-transform duration-200 ease-out", selected ? "scale-100" : "scale-0")} />
+                    </span>
+                    <span>
+                      <span className="block text-[14px] font-semibold text-ink">{m.title}</span>
+                      <span className="mt-0.5 block text-[13px] leading-relaxed text-ink-soft">{m.body}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </TabsContent>
 
-        <TabsContent value="models">
-          <div className="flex flex-col gap-3">
-            {models.map((m) => (
-              <Card
-                key={m.value}
-                role="radio"
-                aria-checked={modelPreference === m.value}
-                tabIndex={0}
-                onClick={() => setModelPreference(m.value)}
-                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setModelPreference(m.value)}
-                className={`cursor-pointer transition-colors hover:border-grad2 ${
-                  modelPreference === m.value ? "border-grad2" : ""
-                }`}
-              >
-                <CardTitle>{m.title}</CardTitle>
-                <CardContent className="mt-1">{m.body}</CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="usage">
-          <Card className="flex flex-col gap-5">
-            {isLoading && <p className="text-sm text-ink-faint">Loading usage…</p>}
-            {usage?.map((u) => (
-              <div key={u.label}>
-                <div className="mb-1.5 flex justify-between text-sm">
-                  <span className="text-ink-soft">{u.label}</span>
-                  <span className="text-ink-faint">
-                    {u.used} / {u.limit}
-                  </span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-surface2">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-grad1 to-grad2"
-                    style={{ width: `${Math.min(100, (u.used / u.limit) * 100)}%` }}
-                  />
-                </div>
+          <TabsContent value="usage">
+            <div className="rounded-2xl bg-surface p-6 shadow-sm">
+              {isLoading && <div className="h-20 animate-pulse rounded-xl bg-surface3" />}
+              <div className="grid gap-6">
+                {usage?.map((u) => {
+                  const pct = Math.min(100, (u.used / u.limit) * 100);
+                  return (
+                    <div key={u.label}>
+                      <div className="mb-2 flex items-baseline justify-between">
+                        <span className="text-[13.5px] font-medium text-ink">{u.label}</span>
+                        <span className="mono text-[12.5px] text-ink-soft">
+                          {u.used} <span className="text-ink-faint">/ {u.limit}</span>
+                        </span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-surface3">
+                        <div
+                          className={cn("h-full rounded-full", pct > 85 ? "bg-warn" : "bg-accent")}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </Card>
-        </TabsContent>
-      </Tabs>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   );
 }

@@ -12,7 +12,11 @@ export function DropdownMenuContent({ className, ...props }: DropdownPrimitive.D
     <DropdownPrimitive.Portal>
       <DropdownPrimitive.Content
         sideOffset={6}
-        className={cn("z-50 min-w-[160px] rounded-lg border border-line bg-surface2 p-1 shadow-lg", className)}
+        className={cn(
+          "z-50 min-w-[168px] origin-[var(--radix-dropdown-menu-content-transform-origin)] rounded-xl bg-surface p-1 shadow-panel",
+          "data-[state=open]:animate-[menuIn_160ms_cubic-bezier(0.23,1,0.32,1)]",
+          className
+        )}
         {...props}
       />
     </DropdownPrimitive.Portal>
@@ -23,7 +27,8 @@ export function DropdownMenuItem({ className, ...props }: DropdownPrimitive.Drop
   return (
     <DropdownPrimitive.Item
       className={cn(
-        "cursor-pointer rounded-md px-2.5 py-1.5 text-sm text-ink-soft outline-none hover:bg-surface hover:text-ink",
+        "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-ink-soft outline-none",
+        "data-[highlighted]:bg-surface2 data-[highlighted]:text-ink",
         className
       )}
       {...props}

@@ -54,7 +54,7 @@ function getStoredTheme(): Theme {
     const saved = localStorage.getItem("cognexa-theme");
     if (saved === "dark" || saved === "light") return saved;
   } catch {}
-  return "light";
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -65,7 +65,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   activeMode: "research",
   setActiveMode: (mode) => set({ activeMode: mode }),
 
-  // Theme — light by default with localStorage sync
+  // Theme — follows the system until the user picks one
   theme: "light",
   initTheme: () => {
     const t = getStoredTheme();

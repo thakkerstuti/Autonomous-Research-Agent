@@ -20,19 +20,17 @@ function CanvasToolbar({
   onArrange, onReset, onToggleFocus, onSpread, focusMode, panelCount,
 }: CanvasToolbarProps) {
   return (
-    <div className="hud-dock absolute right-5 top-4 z-50 flex items-center gap-1 rounded-2xl px-2 py-1.5">
-      <span className="mr-2 text-[11px] uppercase tracking-[0.14em] text-ink-faint">
+    <div className="hud-dock absolute right-4 top-4 z-50 flex items-center gap-0.5 rounded-2xl p-1">
+      <span className="mono px-2.5 text-[12px] text-ink-faint">
         {panelCount} panel{panelCount !== 1 ? "s" : ""}
       </span>
-      <div className="h-4 w-px bg-line mx-1" />
-      {onSpread && (
-        <ToolBtn icon={<Layers size={14} />} label="Spread 5 pages together" onClick={onSpread} />
-      )}
-      <ToolBtn icon={<AlignHorizontalDistributeCenter size={14} />} label="Arrange" onClick={onArrange} />
-      <ToolBtn icon={<RotateCcw size={14} />} label="Reset workspace" onClick={onReset} />
+      <div className="mx-0.5 h-4 w-px bg-line" />
+      {onSpread && <ToolBtn icon={<Layers size={15} strokeWidth={1.75} />} label="Spread all pages" onClick={onSpread} />}
+      <ToolBtn icon={<AlignHorizontalDistributeCenter size={15} strokeWidth={1.75} />} label="Arrange" onClick={onArrange} />
+      <ToolBtn icon={<RotateCcw size={15} strokeWidth={1.75} />} label="Reset" onClick={onReset} />
       <ToolBtn
-        icon={focusMode ? <Minimize size={14} /> : <Maximize size={14} />}
-        label={focusMode ? "Exit focus" : "Focus mode"}
+        icon={focusMode ? <Minimize size={15} strokeWidth={1.75} /> : <Maximize size={15} strokeWidth={1.75} />}
+        label={focusMode ? "Exit focus" : "Focus"}
         onClick={onToggleFocus}
       />
     </div>
@@ -43,11 +41,11 @@ function ToolBtn({ icon, label, onClick }: { icon: ReactNode; label: string; onC
   return (
     <button
       onClick={onClick}
-      title={label}
-      className="group relative flex h-9 w-9 items-center justify-center rounded-xl text-ink-faint transition-all hover:bg-blush hover:text-rose"
+      aria-label={label}
+      className="pressable group relative flex h-8 w-8 items-center justify-center rounded-xl text-ink-soft hover:bg-surface2 hover:text-ink"
     >
       {icon}
-      <span className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-ink shadow-panel opacity-0 group-hover:opacity-100">
+      <span className="pointer-events-none absolute left-1/2 top-[calc(100%+8px)] -translate-x-1/2 origin-top scale-[0.97] whitespace-nowrap rounded-lg bg-primary px-2 py-1 text-[11.5px] font-medium text-on-primary opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover:scale-100 group-hover:opacity-100 group-hover:delay-300">
         {label}
       </span>
     </button>
@@ -78,11 +76,11 @@ function VoiceOrb() {
   return (
     <div className="absolute bottom-5 right-5 z-50 flex flex-col items-center gap-2">
       {state === "listening" && (
-        <div className="flex items-end gap-[3px] h-5">
+        <div className="flex h-5 items-end gap-[3px]">
           {[0.4, 0.7, 1, 0.6, 0.9, 0.5, 0.8].map((h, i) => (
             <span
               key={i}
-              className="voice-bar w-[3px] rounded-full bg-rose"
+              className="voice-bar w-[3px] rounded-full bg-accent"
               style={{ height: `${h * 100}%`, ["--dur" as string]: `${0.5 + i * 0.12}s`, animationDelay: `${i * 0.07}s` } as React.CSSProperties}
             />
           ))}
@@ -91,35 +89,35 @@ function VoiceOrb() {
       <button
         id="voice-orb-btn"
         onClick={cycle}
+        aria-label={label}
         className={cn(
-          "orb-core flex h-14 w-14 items-center justify-center rounded-full border-2 transition-all duration-300",
+          "pressable orb-core flex h-12 w-12 items-center justify-center rounded-full",
           {
-            "border-line bg-surface/80 text-ink-soft hover:border-rose hover:text-rose": state === "idle",
-            "border-rose bg-rose/10 text-rose animate-breathe": state === "listening",
-            "border-lavender bg-lavender-soft text-lavender animate-breathe": state === "thinking",
-            "border-teal bg-teal-soft text-teal": state === "speaking",
+            "bg-surface text-ink-soft hover:text-ink": state === "idle",
+            "bg-accent text-on-primary": state === "listening",
+            "bg-primary text-on-primary animate-breathe": state === "thinking",
+            "bg-steel text-on-primary": state === "speaking",
           }
         )}
-        title={label}
       >
         {state === "idle" && (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
             <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z" />
             <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
             <line x1="12" y1="19" x2="12" y2="22" />
           </svg>
         )}
-        {state === "listening" && <span className="h-3 w-3 rounded-full bg-rose animate-breathe" />}
-        {state === "thinking" && <span className="h-3 w-3 rounded-full bg-lavender animate-breathe" />}
+        {state === "listening" && <span className="h-2.5 w-2.5 rounded-full bg-on-primary animate-breathe" />}
+        {state === "thinking" && <span className="h-2.5 w-2.5 rounded-full bg-accent" />}
         {state === "speaking" && (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
             <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
             <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
           </svg>
         )}
       </button>
-      <span className="text-[10px] uppercase tracking-[0.16em] text-ink-faint">{label}</span>
+      <span className="text-[11px] font-medium text-ink-faint">{label}</span>
     </div>
   );
 }
@@ -145,22 +143,22 @@ export function CommandDock({
   };
 
   return (
-    <div className="absolute bottom-4 left-1/2 z-50 w-[min(720px,calc(100%-8rem))] -translate-x-1/2">
+    <div className="absolute bottom-4 left-1/2 z-50 w-[min(680px,calc(100%-9rem))] -translate-x-1/2">
       {suggestions.length > 0 && (
         <div className="mb-2 flex flex-wrap justify-center gap-1.5">
           {suggestions.map((s) => (
             <button
               key={s}
               onClick={() => onCommand(s)}
-              className="rounded-full border border-line bg-surface/80 px-3 py-1 text-[11px] text-ink-soft backdrop-blur-md transition-all hover:border-rose/50 hover:text-rose"
+              className="pressable hud-dock rounded-full px-3 py-1.5 text-[12px] text-ink-soft hover:text-ink"
             >
               {s}
             </button>
           ))}
         </div>
       )}
-      <div className="hud-dock flex items-center gap-2 rounded-2xl px-3 py-2">
-        <Sparkles size={14} className="flex-shrink-0 text-rose" />
+      <div className="hud-dock flex items-center gap-2 rounded-2xl p-1.5 pl-4 transition-shadow duration-200 focus-within:shadow-panel-hover">
+        <Sparkles size={15} strokeWidth={1.75} className="flex-shrink-0 text-accent" />
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -171,14 +169,16 @@ export function CommandDock({
             }
           }}
           placeholder={placeholder}
-          className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-faint"
+          aria-label="Canvas command"
+          className="h-9 flex-1 bg-transparent text-[14px] text-ink outline-none placeholder:text-ink-faint"
         />
         <button
           onClick={submit}
           disabled={!value.trim()}
-          className="flex h-8 w-8 items-center justify-center rounded-xl bg-rose text-white disabled:opacity-40"
+          aria-label="Run command"
+          className="pressable flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-on-primary disabled:opacity-25"
         >
-          <Send size={13} />
+          <Send size={14} />
         </button>
       </div>
     </div>
@@ -272,9 +272,6 @@ export function ResearchCanvas({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
-      <div className="aurora aurora-a" aria-hidden />
-      <div className="aurora aurora-b" aria-hidden />
-      <div className="canvas-grain" aria-hidden />
 
       <div
         className="canvas-world absolute left-0 top-0"
@@ -301,7 +298,7 @@ export function ResearchCanvas({
       {focusMode && (
         <button
           onClick={() => setFocusMode(false)}
-          className="hud-dock absolute bottom-5 left-5 z-50 flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs text-ink-soft"
+          className="pressable hud-dock absolute bottom-5 left-5 z-50 flex items-center gap-1.5 rounded-xl px-3 py-2 text-[12.5px] font-medium text-ink-soft hover:text-ink"
         >
           <Eye size={13} /> Exit focus
         </button>
