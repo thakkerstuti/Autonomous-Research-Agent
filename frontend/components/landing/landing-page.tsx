@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, ArrowDown, Github } from "lucide-react";
+import { ArrowRight, ArrowDown } from "lucide-react";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { cn } from "@/lib/utils";
 import { SceneCanvas } from "./scene-canvas";
@@ -312,22 +312,6 @@ export function LandingPage() {
         </section>
       </main>
 
-      <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-[1320px] flex-col gap-4 px-5 py-8 text-[13px] text-ink-faint sm:flex-row sm:items-center sm:justify-between sm:px-10">
-          <span className="flex items-center gap-2 text-ink-soft">
-            <BrandMark size={16} /> CogNexa
-          </span>
-          <span>Built by Stuti Thakker and Vanshika Sultania</span>
-          <a
-            href="https://github.com/thakkerstuti/Autonomous-Research-Agent"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 transition-colors hover:text-ink"
-          >
-            <Github size={14} /> Source on GitHub
-          </a>
-        </div>
-      </footer>
     </div>
   );
 }
