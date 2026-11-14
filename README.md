@@ -199,6 +199,7 @@ Questions shorter than 10 characters are rejected with `400`.
 
 > On Render's free tier the service sleeps when idle, and the default SQLite database does not persist across redeploys. Set `DATABASE_URL` to a managed database to keep sessions and papers.
 
-## Author
+## Authors
 
-Built by **[Stuti Thakker](https://github.com/thakkerstuti)**.
+- **[Stuti Thakker](https://github.com/thakkerstuti)**
+- **Vanshika Sultania**
