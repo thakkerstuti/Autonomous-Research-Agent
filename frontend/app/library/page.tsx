@@ -107,11 +107,9 @@ export default function LibraryPage() {
                   <MoreHorizontal size={16} />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {p.status === "ready" && (
-                    <DropdownMenuItem onSelect={() => router.push("/paper-study")}>
-                      <BookOpen size={14} /> Study
-                    </DropdownMenuItem>
-                  )}
+                  <DropdownMenuItem onSelect={() => router.push(`/paper-study?paperId=${encodeURIComponent(p.id)}`)}>
+                    <BookOpen size={14} /> Study
+                  </DropdownMenuItem>
                   <DropdownMenuItem className="data-[highlighted]:bg-bad/10 data-[highlighted]:text-bad" onSelect={() => setRemoved((r) => [...r, p.id])}>
                     <Trash2 size={14} /> Remove
                   </DropdownMenuItem>

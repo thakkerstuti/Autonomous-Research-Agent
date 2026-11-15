@@ -12,6 +12,8 @@ import { AgentRun, ThinkingLine } from "@/components/research/agent-run";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ReportBody, SourceRow } from "@/components/research/report-body";
 import { cn } from "@/lib/utils";
+import { PendingResearch, readWorkspace, updateWorkspace } from "@/lib/workspace";
+import { queryClient } from "@/lib/query-client";
 
 const CHIPS = [
   "Does AI actually help developers work faster?",
@@ -201,6 +203,95 @@ function Entry({ entry, onRetry, busy }: { entry: EntryData; onRetry: (q: string
   );
 }
 
+/* ───────────── Saved work ───────────── */
+
+async function sessionMessages(sessionId: string): Promise<ChatMessage[] | null> {
+  const { apiClient } = await import("@/lib/api");
+  const data = await apiClient<any>(`/research/sessions/${sessionId}`);
+  if (!data) return null;
+
+  const { adaptResearchResponseToSteps } = await import("@/lib/adapters");
+  const events = adaptResearchResponseToSteps(data);
+  const steps: { label: string; detail: string }[] = [];
+  let sources: any;
+  let answer = "";
+  events.forEach((ev: any) => {
+    if (ev.type === "step" && ev.label) steps.push({ label: ev.label, detail: ev.detail ?? "" });
+    else if (ev.type === "sources" && ev.sources) sources = ev.sources;
+    else if (ev.type === "done") answer = ev.answer ?? "";
+  });
+
+  return [
+    { id: `${sessionId}-q`, role: "user", text: data.research_question || "Saved session", status: "done" },
+    {
+      id: data.session_id || sessionId,
+      role: "assistant",
+      status: "done",
+      steps,
+      sources,
+      answer: answer || data.report || "No report found.",
+      view: buildResearchView(data),
+    },
+  ];
+}
+
+function rememberSession(sessionId: string | undefined, startedAt?: number) {
+  updateWorkspace((w) => {
+    const ids = (w.research?.sessionIds ?? []).filter((id) => id !== sessionId);
+    const pending = w.research?.pending;
+    return {
+      ...w,
+      research: {
+        sessionIds: sessionId ? [...ids, sessionId].slice(-10) : ids,
+        pending: startedAt != null && pending?.startedAt === startedAt ? null : pending ?? null,
+      },
+    };
+  });
+}
+
+// How long a question that was running during a reload is waited for
+const RECOVER_MS = 15 * 60_000;
+let recoveryTimer: ReturnType<typeof setInterval> | null = null;
+
+function recoverPending(p: PendingResearch, messageId: string) {
+  if (recoveryTimer) return;
+  const stop = () => {
+    if (recoveryTimer) clearInterval(recoveryTimer);
+    recoveryTimer = null;
+  };
+  const tick = async () => {
+    const ws = readWorkspace().research;
+    if (!ws?.pending || ws.pending.startedAt !== p.startedAt) return stop();
+    try {
+      const { apiClient } = await import("@/lib/api");
+      const list = await apiClient<{ id: string; title: string }[]>("/research/sessions");
+      const known = new Set([...(ws.pending.knownIds ?? []), ...(ws.sessionIds ?? [])]);
+      const match = list.find((s) => s.title === p.question && !known.has(s.id));
+      if (match) {
+        stop();
+        const msgs = await sessionMessages(match.id);
+        if (msgs?.[1]) useUiStore.getState().updateMessage("research", messageId, { ...msgs[1], id: messageId });
+        rememberSession(match.id, p.startedAt);
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        return;
+      }
+    } catch {
+      // Network hiccup: try again on the next tick
+    }
+    if (Date.now() - p.startedAt > RECOVER_MS) {
+      stop();
+      useUiStore.getState().updateMessage("research", messageId, {
+        status: "done",
+        steps: [],
+        answer: "**Error:** This research didn't finish while the page was closed. Please ask again.",
+      });
+      rememberSession(undefined, p.startedAt);
+    }
+  };
+  recoveryTimer = setInterval(tick, 5_000);
+  void tick();
+}
+
 /* ───────────── Page ───────────── */
 
 function ResearchPage() {
@@ -212,6 +303,9 @@ function ResearchPage() {
   const { chatHistories, appendMessage, updateMessage, resetHistory } = useUiStore();
   const messages = chatHistories["research"];
   const [sending, setSending] = useState(false);
+  // A question still running (possibly sent before navigating away and back)
+  const inFlight = messages.some((m) => m.role === "assistant" && m.status === "pending");
+  const busy = sending || inFlight;
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("full");
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -243,33 +337,10 @@ function ResearchPage() {
 
     async function loadSavedSession() {
       try {
-        const { apiClient } = await import("@/lib/api");
-        const data = await apiClient<any>(`/research/sessions/${sessionId}`);
-        if (!active || !data) return;
-
-        const { adaptResearchResponseToSteps } = await import("@/lib/adapters");
-        const events = adaptResearchResponseToSteps(data);
-        const steps: { label: string; detail: string }[] = [];
-        let sources: any;
-        let answer = "";
-        events.forEach((ev: any) => {
-          if (ev.type === "step" && ev.label) steps.push({ label: ev.label, detail: ev.detail ?? "" });
-          else if (ev.type === "sources" && ev.sources) sources = ev.sources;
-          else if (ev.type === "done") answer = ev.answer ?? "";
-        });
-
-        resetHistory("research", [
-          { id: `${sessionId}-q`, role: "user", text: data.research_question || "Saved session", status: "done" },
-          {
-            id: data.session_id || sessionId!,
-            role: "assistant",
-            status: "done",
-            steps,
-            sources,
-            answer: answer || data.report || "No report found.",
-            view: buildResearchView(data),
-          },
-        ]);
+        const msgs = await sessionMessages(sessionId!);
+        if (!active || !msgs) return;
+        resetHistory("research", msgs);
+        updateWorkspace((w) => ({ ...w, research: { sessionIds: [sessionId!], pending: null } }));
       } catch (err) {
         console.warn("Could not load saved session:", err);
       }
@@ -281,9 +352,72 @@ function ResearchPage() {
     };
   }, [sessionId, resetHistory]);
 
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || sessionId || initialQuery) return;
+    restored.current = true;
+    if (useUiStore.getState().chatHistories.research.length) return;
+    const ws = readWorkspace().research;
+    if (!ws || (!ws.sessionIds?.length && !ws.pending)) return;
+
+    (async () => {
+      const ids = ws.sessionIds ?? [];
+      const results = await Promise.all(ids.map((id) => sessionMessages(id).catch(() => null)));
+      const kept = ids.filter((_, i) => results[i]);
+      if (kept.length !== ids.length) {
+        updateWorkspace((w) => ({ ...w, research: { ...(w.research ?? { sessionIds: [] }), sessionIds: kept } }));
+      }
+      const msgs: ChatMessage[] = results.flatMap((r) => r ?? []);
+
+      const p = ws.pending;
+      let recoverId: string | null = null;
+      if (p && Date.now() - p.startedAt < RECOVER_MS) {
+        recoverId = `recover-${p.startedAt}`;
+        msgs.push(
+          { id: `recover-q-${p.startedAt}`, role: "user", text: p.question, status: "done" },
+          {
+            id: recoverId,
+            role: "assistant",
+            status: "pending",
+            steps: [{ label: "Still working…", detail: "Picking up the research you started before reloading" }],
+            startedAt: p.startedAt,
+          }
+        );
+      } else if (p) {
+        rememberSession(undefined, p.startedAt);
+      }
+
+      // Don't overwrite a conversation started in the meantime
+      if (useUiStore.getState().chatHistories.research.length) return;
+      resetHistory("research", msgs);
+      if (p && recoverId) recoverPending(p, recoverId);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function send(text: string) {
-    if (!text.trim() || sending) return;
+    if (!text.trim() || busy) return;
     setSending(true);
+    const startedAt = Date.now();
+    updateWorkspace((w) => ({
+      ...w,
+      research: {
+        sessionIds: w.research?.sessionIds ?? [],
+        pending: { question: text, format: outputFormat, startedAt, knownIds: null },
+      },
+    }));
+    // Note which sessions already exist, so a reload can recognise this one
+    void (async () => {
+      try {
+        const { apiClient } = await import("@/lib/api");
+        const list = await apiClient<{ id: string }[]>("/research/sessions");
+        updateWorkspace((w) =>
+          w.research?.pending?.startedAt === startedAt
+            ? { ...w, research: { ...w.research, pending: { ...w.research.pending, knownIds: list.map((x) => x.id) } } }
+            : w
+        );
+      } catch {}
+    })();
 
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", text, status: "done" };
     const aId = crypto.randomUUID();
@@ -326,11 +460,16 @@ function ResearchPage() {
         answer: answer || "No answer returned.",
         view: buildResearchView(res),
       });
+      rememberSession(res?.session_id || undefined, startedAt);
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
     } catch (err: any) {
       let msg = err.message || "Network failure";
       if (err.status === 400) msg = `Invalid research question: ${msg}`;
       else if (err.status === 503) msg = `Service unavailable (Gemini quota or rate limit): ${msg}`;
       updateMessage("research", aId, { status: "done", steps: [], answer: `**Error:** ${msg}` });
+      // Only a server answer settles it. A dropped connection (a reload, closing the tab)
+      // leaves the question marked as running, so it can be picked up when it finishes.
+      if (typeof err?.status === "number") rememberSession(undefined, startedAt);
     } finally {
       setSending(false);
     }
@@ -361,8 +500,11 @@ function ResearchPage() {
         <div className="flex-1" />
         {hasMessages && (
           <button
-            onClick={() => resetHistory("research", [])}
-            disabled={sending}
+            onClick={() => {
+              resetHistory("research", []);
+              updateWorkspace((w) => ({ ...w, research: null }));
+            }}
+            disabled={busy}
             className="pressable flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-ink-soft hover:bg-surface2 hover:text-ink disabled:opacity-40"
           >
             <Plus size={14} /> <span className="hidden sm:inline">New chat</span>
@@ -376,7 +518,7 @@ function ResearchPage() {
         ) : (
           <div className="mx-auto flex max-w-[760px] flex-col gap-12 px-5 pb-16 pt-10 sm:px-8">
             {entries.map((e) => (
-              <Entry key={e.q.id} entry={e} busy={sending} onRetry={send} />
+              <Entry key={e.q.id} entry={e} busy={busy} onRetry={send} />
             ))}
           </div>
         )}
@@ -386,8 +528,8 @@ function ResearchPage() {
         <div className="mx-auto max-w-[760px]">
           <Composer
             placeholder={hasMessages ? "Reply to CogNexa" : "Ask an open research question"}
-            disabled={sending}
-            busy={sending}
+            disabled={busy}
+            busy={busy}
             onSend={send}
             format={outputFormat}
             onFormatChange={setOutputFormat}

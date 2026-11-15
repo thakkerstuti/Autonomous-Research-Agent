@@ -11,6 +11,7 @@ import { ApiError, errorFromResponse } from "./api-error";
 import { queryClient } from "./query-client";
 import { useUiStore } from "./store";
 import type { User } from "./types";
+import { clearWorkspace } from "./workspace";
 
 export const AUTH_BASE = "/backend/auth";
 
@@ -144,6 +145,8 @@ export async function signUp(name: string, email: string, password: string) {
 }
 
 export async function signOut() {
+  // Explicit sign-out also forgets this user's open workspace on this browser
+  clearWorkspace(useUiStore.getState().user?.id);
   try {
     await authRequest<void>("/logout", { method: "POST" });
   } finally {
@@ -152,6 +155,7 @@ export async function signOut() {
 }
 
 export async function signOutEverywhere() {
+  clearWorkspace(useUiStore.getState().user?.id);
   try {
     await authRequest<void>("/logout-all", { method: "POST" }, true);
   } finally {

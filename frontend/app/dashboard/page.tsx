@@ -209,7 +209,7 @@ export default function DashboardPage() {
       out.push({ title: `Re-upload “${p.title}”`, why: "Processing failed for this paper.", href: "/library", tone: "warn" })
     );
     paperList.filter((p) => p.status === "ready").slice(0, 1).forEach((p) =>
-      out.push({ title: `Study “${p.title}”`, why: "It is summarised and ready for the canvas.", href: "/paper-study" })
+      out.push({ title: `Study “${p.title}”`, why: "It is summarised and ready for the canvas.", href: `/paper-study?paperId=${encodeURIComponent(p.id)}` })
     );
     if (report) out.push({ title: "Read the latest report", why: `${report.findings.length} ${plural(report.findings.length, "finding")} on “${report.question}”.`, href: "/report" });
     if (!sessionList.length) out.push({ title: "Ask your first research question", why: "The agent plans hypotheses, searches and verifies sources.", href: "/research" });

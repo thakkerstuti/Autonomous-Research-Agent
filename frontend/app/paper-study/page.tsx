@@ -5,7 +5,7 @@ import {
   UploadCloud, FileText, AlertCircle, Loader2, Check,
   FileSearch, Brain, StickyNote, GitCompare, Lightbulb, ArrowLeft, ArrowRight,
 } from "lucide-react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { FloatingPanel, PanelType } from "@/components/ui/floating-panel";
@@ -13,8 +13,11 @@ import { ResearchCanvas } from "@/components/ui/research-canvas";
 import { spreadLayout } from "@/lib/canvas-layout";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { cn } from "@/lib/utils";
+import { PaperReader } from "@/components/paper/paper-reader";
+import { usePapersQuery } from "@/lib/queries";
+import { readWorkspace, updateWorkspace } from "@/lib/workspace";
 
-type Step = "upload" | "level" | "processing" | "done";
+type Step = "upload" | "level" | "study" | "processing" | "done";
 type Level = "Beginner" | "Medium" | "Pro";
 
 interface Panel {
@@ -554,12 +557,42 @@ function ProcessingStep({ paperId, onDone }: { paperId: string; onDone: () => vo
 }
 
 export default function PaperStudyPage({ searchParams }: { searchParams: { paperId?: string } }) {
-  const [step, setStep] = useState<Step>(searchParams.paperId ? "processing" : "upload");
+  const queryClient = useQueryClient();
+  // The paper to show: the one in the URL, else the one this user had open
+  const [paperId, setPaperId] = useState<string | null>(() => searchParams.paperId || readWorkspace().paper?.id || null);
+  const [step, setStep] = useState<Step>(() => (searchParams.paperId || readWorkspace().paper?.id ? "study" : "upload"));
   const [file, setFile] = useState<File | null>(null);
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [level, setLevel] = useState<Level>("Medium");
-  const [paperId, setPaperId] = useState<string | null>(searchParams.paperId || null);
+  const { data: papers } = usePapersQuery();
+
+  const openPaper = useCallback((id: string) => {
+    setPaperId(id);
+    setStep("study");
+    updateWorkspace((w) => ({ ...w, paper: w.paper?.id === id ? w.paper : { id } }));
+    // Keep the address shareable and refresh-safe
+    if (window.location.search !== `?paperId=${id}`) window.history.replaceState(null, "", `/paper-study?paperId=${encodeURIComponent(id)}`);
+  }, []);
+
+  // Opening a specific paper from the library or dashboard
+  useEffect(() => {
+    if (searchParams.paperId && searchParams.paperId !== paperId) openPaper(searchParams.paperId);
+    else if (paperId && paperId !== "demo" && step === "study" && !searchParams.paperId) openPaper(paperId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.paperId]);
+
+  const studyAnother = useCallback(() => {
+    updateWorkspace((w) => ({ ...w, paper: null }));
+    window.history.replaceState(null, "", "/paper-study");
+    setPaperId(null);
+    setFile(null);
+    setError(null);
+    setStep("upload");
+  }, []);
+
+  // Same file name and page count as a paper already in the library
+  const existing = file && papers ? papers.find((p) => p.title === file.name && p.pages === pageCount) : undefined;
 
   const uploadMutation = useMutation({
     mutationFn: async () => {
@@ -571,8 +604,9 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
       return apiClient<{ id: string }>("/papers", { method: "POST", body: fd });
     },
     onSuccess: (data) => {
-      if (data) setPaperId(data.id);
-      setStep("processing");
+      if (!data) return;
+      queryClient.invalidateQueries({ queryKey: ["papers"] });
+      openPaper(data.id);
     },
     onError: (e: any) => setError(e.message || "Upload failed"),
   });
@@ -584,6 +618,10 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
     if (f.size === 0) { setPaperId("demo"); setStep("processing"); }
     else setStep("level");
   };
+
+  if (step === "study" && paperId && paperId !== "demo") {
+    return <PaperReader key={paperId} paperId={paperId} onStudyAnother={studyAnother} />;
+  }
 
   if (step === "upload") {
     return <UploadStep onFile={handleFile} error={error} />;
@@ -604,6 +642,15 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
               </div>
             </div>
           </div>
+
+          {existing && (
+            <div className="animate-view-in mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-accent-soft px-4 py-3 text-[13.5px] text-ink">
+              <span>You&rsquo;ve already uploaded this paper. Open it instead of processing it again?</span>
+              <Button size="sm" variant="outline" onClick={() => openPaper(existing.id)}>
+                Open existing
+              </Button>
+            </div>
+          )}
 
           <h2 className="animate-view-in mt-10 font-display text-display font-semibold text-ink" style={{ animationDelay: "60ms" }}>
             How should CogNexa explain it?
@@ -633,11 +680,12 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
     );
   }
 
-  if (step === "processing" && paperId) {
+  // The demo canvas (sample content, opened from the upload screen)
+  if (step === "processing" && paperId === "demo") {
     return <ProcessingStep paperId={paperId} onDone={() => setStep("done")} />;
   }
 
-  if (step === "done" && paperId) {
+  if (step === "done" && paperId === "demo") {
     return (
       <div className="h-full bg-canvas">
         <CanvasWorkspace />
@@ -645,5 +693,5 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
     );
   }
 
-  return null;
+  return <UploadStep onFile={handleFile} error={error} />;
 }
