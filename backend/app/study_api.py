@@ -67,9 +67,11 @@ def retry_study_kit(paper_id: str, db: Session = Depends(get_db), user: models.U
 def set_flashcard_progress(paper_id: str, body: ProgressBody, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     paper = _owned_paper(db, paper_id, user)
     cards = study.get_artifact(db, paper.id, "flashcards")
-    ids = {c["id"] for c in ((cards.content or {}).get("cards", []) if cards else [])}
+    if not cards or not (cards.content or {}).get("cards"):
+        raise HTTPException(status_code=404, detail="These flashcards aren't ready yet.")
+    ids = {c["id"] for c in cards.content["cards"]}
     if body.card_id not in ids:
-        raise HTTPException(status_code=404, detail="Flashcard not found")
+        raise HTTPException(status_code=404, detail="This flashcard no longer exists. Reload the deck.")
     progress = study.get_artifact(db, paper.id, "flashcard_progress")
     if not progress:
         progress = models.StudyArtifact(paper_id=paper.id, kind="flashcard_progress", status="ready", content={"states": {}})

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, RefreshCw, RotateCcw } from "lucide-react";
 import { apiClient } from "@/lib/api";
@@ -36,28 +36,35 @@ function Deck({ paperId, version, onOpenPage }: { paperId: string; version: stri
 
   const go = (delta: number) => setIndex(clampIndex(i + delta, shown.length));
 
+  // The card on screen right now, for deciding whether to advance after a save
+  const currentCardId = useRef<string | undefined>(undefined);
+  currentCardId.current = card?.id;
+  const [saving, setSaving] = useState<CardState | null>(null);
+
+  /** Saves first; the mark only appears once the server has stored it. */
   const mark = async (chosen: CardState) => {
-    if (!card) return;
-    const next = nextCardState(states[card.id], chosen);
-    const previous = states;
-    const updated = { ...states };
-    if (next) updated[card.id] = next;
-    else delete updated[card.id];
-    setStates(updated); // optimistic
+    if (!card || saving) return;
+    const cardId = card.id;
+    const next = nextCardState(states[cardId], chosen);
+    setSaving(chosen);
     setSaveError(null);
-    // Move on right away (never after the save returns: the reader may have navigated meanwhile)
-    if (!onlyReview && next) go(1);
     try {
       const res = await apiClient<{ states: Record<string, CardState> }>(`/papers/${paperId}/study/flashcards/progress`, {
         method: "PUT",
-        body: JSON.stringify({ card_id: card.id, state: next }),
+        body: JSON.stringify({ card_id: cardId, state: next }),
       });
+      setStates(res.states);
       queryClient.setQueryData<StudyOutput<{ cards: Card[] }>>(["study-output", paperId, "flashcards", version], (old) =>
         old ? { ...old, progress: res.states } : old
       );
+      // Move on only if the reader is still on the card they marked
+      if (!onlyReview && next && currentCardId.current === cardId) {
+        setIndex((prev) => clampIndex(clampIndex(prev, cards.length) + 1, cards.length));
+      }
     } catch (err) {
-      setStates(previous);
-      setSaveError(err instanceof Error ? err.message : "Couldn't save that.");
+      setSaveError(`Not saved: ${err instanceof Error ? err.message : "please try again."}`);
+    } finally {
+      setSaving(null);
     }
   };
 
@@ -176,19 +183,21 @@ function Deck({ paperId, version, onOpenPage }: { paperId: string; version: stri
                 size="sm"
                 variant="outline"
                 onClick={() => mark("review")}
+                disabled={saving !== null}
                 aria-pressed={states[card.id] === "review"}
                 className={cn(states[card.id] === "review" && "border-warn/60 text-warn")}
               >
-                <RotateCcw size={14} /> Need revision
+                {saving === "review" ? <ThinkingMark active size={14} /> : <RotateCcw size={14} />} Need revision
               </Button>
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => mark("known")}
+                disabled={saving !== null}
                 aria-pressed={states[card.id] === "known"}
                 className={cn(states[card.id] === "known" && "border-ok/60 text-ok")}
               >
-                <Check size={14} /> Known
+                {saving === "known" ? <ThinkingMark active size={14} /> : <Check size={14} />} Known
               </Button>
             </div>
             <Button variant="ghost" size="sm" onClick={() => go(1)} disabled={i >= shown.length - 1}>
@@ -202,7 +211,7 @@ function Deck({ paperId, version, onOpenPage }: { paperId: string; version: stri
       <div className="mt-12 flex flex-wrap items-center gap-3 border-t border-line pt-5 text-[13px] text-ink-soft">
         {confirmRegen ? (
           <>
-            <span>Make a new set of cards? Your Known / Need revision marks will reset.</span>
+            <span>Make a new set of cards? Marks are kept for cards that stay the same.</span>
             <Button size="sm" variant="outline" onClick={() => { setConfirmRegen(false); actions.regenerate("flashcards"); }} disabled={actions.busy !== null}>
               Yes, regenerate
             </Button>

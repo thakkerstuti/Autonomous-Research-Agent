@@ -44,6 +44,19 @@ def fresh_db():
     yield
 
 
+@pytest.fixture(autouse=True)
+def study_ai_not_stubbed(monkeypatch):
+    """Uploads start the study kit automatically. Unless a test provides its
+    own fake, study AI calls fail at once, so no test ever reaches a model."""
+    from app import study
+
+    def unavailable(prompt, schema):
+        raise RuntimeError("study AI is not stubbed in this test")
+
+    monkeypatch.setattr(study, "_call_gemini", unavailable)
+    monkeypatch.setattr(study, "_sleep", lambda seconds: None)  # no real waiting in rate-limit backoff
+
+
 @pytest.fixture
 def client():
     with TestClient(app) as c:

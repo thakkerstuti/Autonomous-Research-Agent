@@ -174,11 +174,11 @@ def test_flashcards_dedupe_drop_trivial_and_track_progress(client, user, ai):
     assert output(client, user, pid, "flashcards")["progress"] == {first: "known", second: "review"}
     assert client.put(f"/papers/{pid}/study/flashcards/progress", headers=bearer(user), json={"card_id": "fc-nope", "state": "known"}).status_code == 404
 
-    # Regenerate: only flashcards are rebuilt, and progress starts over
+    # Regenerate: only flashcards are rebuilt; marks survive for cards that are unchanged
     before = len(ai.calls)
     client.post(f"/papers/{pid}/study/flashcards/regenerate", headers=bearer(user))
     assert [n for n, _ in ai.calls[before:]] == ["FlashcardSet"]
-    assert output(client, user, pid, "flashcards")["progress"] == {}
+    assert output(client, user, pid, "flashcards")["progress"] == {first: "known", second: "review"}
 
 
 def test_question_bank_is_categorised_and_grounded(client, user, ai):
@@ -215,16 +215,26 @@ def test_generated_once_then_only_read(client, user, ai):
     assert {"chunk:0", "summary", "flashcards", "questions", "highlights"} <= kinds
 
 
-def test_not_started_and_processing_states(client, user, ai, monkeypatch):
+def test_queued_state_right_after_upload(client, user, ai, monkeypatch):
+    monkeypatch.setattr(tasks, "enqueue_study", lambda *a: None)  # queued, worker has not run yet
     pid = upload(client, user, text_pdf(2))
     st = client.get(f"/papers/{pid}/study", headers=bearer(user)).json()
-    assert st["status"] == "not_started" and ai.calls == []
-    assert client.get(f"/papers/{pid}/study/summary", headers=bearer(user)).status_code == 404
-    monkeypatch.setattr(tasks, "enqueue_study", lambda *a: None)  # queued, not yet run
-    st = client.post(f"/papers/{pid}/study", headers=bearer(user)).json()
     assert st["status"] == "processing" and st["chunks"] == {"total": 1, "pending": 1, "processing": 0, "ready": 0, "failed": 0}
+    assert all(o["status"] == "pending" for o in st["outputs"].values())
     pending = output(client, user, pid, "summary")
     assert pending["status"] == "pending" and pending["content"] is None
+    assert ai.calls == []  # reading status and outputs never calls the AI
+
+
+def test_older_paper_without_a_kit_can_still_start_one(client, user, ai, monkeypatch):
+    pid = upload(client, user, text_pdf(2))
+    db = SessionLocal()
+    db.query(models.StudyArtifact).filter_by(paper_id=pid).delete()  # as if uploaded before automatic kits
+    db.commit()
+    db.close()
+    assert client.get(f"/papers/{pid}/study", headers=bearer(user)).json()["status"] == "not_started"
+    assert client.get(f"/papers/{pid}/study/summary", headers=bearer(user)).status_code == 404
+    assert client.post(f"/papers/{pid}/study", headers=bearer(user)).json()["status"] == "ready"
 
 
 def test_failed_chunk_gives_partial_kit_and_retry_redoes_only_that(client, user, monkeypatch):
@@ -346,3 +356,121 @@ def test_other_users_cannot_reach_the_study_kit(client, user, ai):
         ("get", f"/papers/{pid}/asks", {}), ("post", f"/papers/{pid}/ask", {"json": {"question": "What about topic1?"}}),
     ]:
         assert getattr(client, method)(path, headers=bearer(other), **kw).status_code == 404, path
+
+
+
+# ───────── automatic study kit ─────────
+
+def test_upload_starts_the_study_kit_automatically(client, user, ai):
+    pid = upload(client, user, text_pdf(4))
+    # nothing else was called: the upload alone produced the kit
+    assert ai.count("ChunkNotes") == 1
+    assert [ai.count(n) for n in ("PaperSummary", "FlashcardSet", "QuestionBank", "HighlightSet")] == [1, 1, 1, 1]
+    st = client.get(f"/papers/{pid}/study", headers=bearer(user)).json()
+    assert st["status"] == "ready" and all(o["status"] == "ready" for o in st["outputs"].values())
+
+
+def test_no_duplicate_generation_on_refresh_or_repeated_requests(client, user, ai):
+    pid = upload(client, user, text_pdf(4))
+    made = len(ai.calls)
+    for _ in range(3):
+        client.get(f"/papers/{pid}/study", headers=bearer(user))
+        for kind in study.OUTPUTS:
+            output(client, user, pid, kind)
+    client.post(f"/papers/{pid}/study", headers=bearer(user))
+    client.post(f"/papers/{pid}/study", headers=bearer(user))
+    client.post(f"/papers/{pid}/study/retry", headers=bearer(user))  # nothing failed: nothing to retry
+    tasks.resume_unfinished()  # a restart
+    assert len(ai.calls) == made
+
+
+def test_scanned_upload_starts_nothing(client, user, ai):
+    pid = upload(client, user, scanned_pdf())
+    db = SessionLocal()
+    assert db.query(models.StudyArtifact).filter_by(paper_id=pid).count() == 0
+    db.close()
+    assert ai.calls == []
+    assert client.get(f"/papers/{pid}/study", headers=bearer(user)).json()["status"] == "not_started"
+
+
+def test_artifacts_progress_and_fail_independently(client, user, monkeypatch):
+    monkeypatch.setattr(tasks, "enqueue_paper", lambda *a: None)
+    monkeypatch.setattr(study, "_call_gemini", FakeStudyGemini(fail_kinds={"questions"}))
+    pid = upload(client, user, text_pdf(3))
+    st = client.get(f"/papers/{pid}/study", headers=bearer(user)).json()
+    assert {k: o["status"] for k, o in st["outputs"].items()} == {
+        "summary": "ready", "flashcards": "ready", "questions": "failed", "highlights": "ready"}
+    assert st["status"] == "partial"
+    assert output(client, user, pid, "highlights")["status"] == "ready"  # usable while another failed
+
+
+def test_study_queue_is_idempotent_per_paper(monkeypatch):
+    class LiveWorker:
+        def is_alive(self):
+            return True
+
+    monkeypatch.delenv("PAPER_WORKER", raising=False)
+    monkeypatch.setattr(tasks, "_study_worker", LiveWorker())
+    monkeypatch.setattr(tasks, "_study_queued", set())
+    monkeypatch.setattr(tasks, "_study_running", set())
+    monkeypatch.setattr(tasks, "_study_rerun", set())
+    monkeypatch.setattr(tasks, "_study_queue", tasks.queue.Queue())
+    tasks.enqueue_study("p1")
+    tasks.enqueue_study("p1")  # e.g. a refresh while it waits
+    assert tasks._study_queue.qsize() == 1
+    tasks._study_queued.clear()
+    monkeypatch.setattr(tasks, "_study_queue", tasks.queue.Queue())
+    tasks._study_running.add("p1")  # now it is running
+    tasks.enqueue_study("p1")
+    assert tasks._study_queue.qsize() == 0 and tasks._study_rerun == {"p1"}  # no second job, one follow-up run
+
+
+# ───────── flashcard review API ─────────
+
+def test_flashcard_progress_api_success_failure_and_persistence(client, user, ai, monkeypatch):
+    monkeypatch.setattr(tasks, "enqueue_study", lambda *a: None)
+    pid = upload(client, user, text_pdf(3))
+    early = client.put(f"/papers/{pid}/study/flashcards/progress", headers=bearer(user), json={"card_id": "fc-x", "state": "known"})
+    assert early.status_code == 404 and "ready yet" in early.json()["detail"]
+
+    monkeypatch.undo()
+    monkeypatch.setattr(study, "_call_gemini", ai)
+    tasks.enqueue_study(pid)
+    cards = output(client, user, pid, "flashcards")["content"]["cards"]
+    cid = cards[0]["id"]
+
+    def put(body):
+        return client.put(f"/papers/{pid}/study/flashcards/progress", headers=bearer(user), json=body)
+
+    assert put({"card_id": cid, "state": "maybe"}).status_code == 422
+    gone = put({"card_id": "fc-deleted", "state": "known"})
+    assert gone.status_code == 404 and "no longer exists" in gone.json()["detail"]
+    ok = put({"card_id": cid, "state": "review"})
+    assert ok.status_code == 200 and ok.json()["states"] == {cid: "review"}
+    # a fresh client (a page refresh, or another device) sees the saved state
+    again = new_client()
+    assert again.get(f"/papers/{pid}/study/flashcards", headers=bearer(user)).json()["progress"] == {cid: "review"}
+    assert put({"card_id": cid, "state": None}).json()["states"] == {}
+
+
+def test_regenerated_deck_drops_marks_only_for_removed_cards(client, user, ai, monkeypatch):
+    pid = upload(client, user, text_pdf(3))
+    cards = output(client, user, pid, "flashcards")["content"]["cards"]
+    keep, drop = cards[0]["id"], cards[1]["id"]
+    for cid in (keep, drop):
+        client.put(f"/papers/{pid}/study/flashcards/progress", headers=bearer(user), json={"card_id": cid, "state": "known"})
+
+    class NewDeck(FakeStudyGemini):
+        def __call__(self, prompt, schema):
+            if schema.__name__ == "FlashcardSet":
+                return schema(cards=[
+                    {"category": "term", "question": "What is retrieval practice?", "answer": "Recalling from memory.", "pages": [1]},
+                    {"category": "concept", "question": "Why does spacing help memory consolidation?", "answer": "Gaps force effortful recall.", "pages": [2]},
+                ])
+            return super().__call__(prompt, schema)
+
+    monkeypatch.setattr(study, "_call_gemini", NewDeck())
+    client.post(f"/papers/{pid}/study/flashcards/regenerate", headers=bearer(user))
+    fc = output(client, user, pid, "flashcards")
+    assert keep in {c["id"] for c in fc["content"]["cards"]}
+    assert fc["progress"] == {keep: "known"}  # unchanged card keeps its mark; the removed card's mark is gone

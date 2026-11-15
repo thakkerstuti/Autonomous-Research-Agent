@@ -82,3 +82,29 @@ test("grouping keeps category order and drops empty groups", () => {
   assert.deepEqual(groupByCategory(qs, QUESTION_CATEGORIES).map((g) => [g.key, g.items.length]), [["basic", 2], ["findings", 1]]);
   assert.deepEqual(groupByCategory([{ category: "limitation" }], HIGHLIGHT_CATEGORIES).map((g) => g.label), ["Limitations"]);
 });
+
+import { sectionState, kitProgress } from "../lib/study-logic.ts";
+
+test("each section reports its own state", () => {
+  const k = kit({
+    status: "processing",
+    chunks: { total: 4, pending: 0, processing: 0, ready: 4, failed: 0 },
+    outputs: { summary: out("ready"), flashcards: out("processing"), questions: out("pending"), highlights: out("failed", "x") },
+  });
+  assert.equal(sectionState(k, "summary"), "ready");
+  assert.equal(sectionState(k, "flashcards"), "generating");
+  assert.equal(sectionState(k, "questions"), "waiting");
+  assert.equal(sectionState(k, "highlights"), "failed");
+  assert.equal(sectionState(undefined, "summary"), "not_started");
+});
+
+test("overall progress counts chunks read and sections written", () => {
+  const k = kit({
+    status: "processing",
+    chunks: { total: 6, pending: 2, processing: 1, ready: 3, failed: 0 },
+    outputs: { summary: out("pending"), flashcards: out("pending"), questions: out("pending"), highlights: out("pending") },
+  });
+  assert.deepEqual(kitProgress(k), { done: 3, total: 10, pct: 30 });
+  assert.deepEqual(kitProgress(kit({})), { done: 7, total: 7, pct: 100 });
+  assert.deepEqual(kitProgress(null), { done: 0, total: 0, pct: 0 });
+});

@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 import app.models as models
-from app import tasks
+from app import study, tasks
 from app.auth.deps import get_current_user
 from app.database import get_db
 from app.log import get_logger
@@ -161,6 +161,10 @@ def upload_paper(
     )
     if text_pages:
         tasks.enqueue_paper(paper.id, level)
+        # The study kit (summary, flashcards, Q&A, highlights) starts right away,
+        # in its own worker, alongside the page explanations
+        study.ensure_kit(db, paper.id)
+        tasks.enqueue_study(paper.id)
 
     return {
         "id": paper.id,

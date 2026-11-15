@@ -24,7 +24,12 @@ export async function apiClient<T>(
       headers.set("Content-Type", "application/json");
     }
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    return fetch(url, { ...options, headers });
+    return fetch(url, { ...options, headers }).catch((err: unknown) => {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      // The browser got no usable response (offline, server restarting, or the
+      // request was blocked); say that instead of the browser's "Failed to fetch"
+      throw new ApiError(0, "Couldn't reach the CogNexa server. Check your connection and try again in a moment.");
+    });
   };
 
   let response = await send(await getAccessToken());

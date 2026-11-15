@@ -165,16 +165,19 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
 
+_sleep = time.sleep  # tests replace this to skip real backoff waits
+
+
 def _model_call(prompt: str, schema):
     """Gemini call with backoff for rate limits (the call itself tries fallback models)."""
     backoff = 4
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             return _call_gemini(prompt, schema)
         except Exception as exc:
             text = str(getattr(exc, "detail", "") or exc)
-            if ("429" in text or "RESOURCE_EXHAUSTED" in text.upper()) and attempt < 2:
-                time.sleep(backoff + random.uniform(0, 1))
+            if ("429" in text or "RESOURCE_EXHAUSTED" in text.upper()) and attempt < 3:
+                _sleep(backoff + random.uniform(0, 1))
                 backoff *= 2
                 continue
             raise
@@ -509,7 +512,7 @@ def generate_study_kit_job(paper_id: str) -> None:
                 }
                 artifact.content, artifact.status, artifact.error = content, "ready", None
                 if kind == "flashcards":
-                    _reset_progress(db, paper_id)
+                    _prune_progress(db, paper_id, {c["id"] for c in content["cards"]})
             except Exception as exc:
                 log.warning("study output failed paper=%s kind=%s error=%s: %s", paper_id, kind, type(exc).__name__, str(exc)[:200])
                 artifact.status, artifact.error = "failed", _public_error(exc)
@@ -527,10 +530,13 @@ def generate_study_kit_job(paper_id: str) -> None:
         db.close()
 
 
-def _reset_progress(db: Session, paper_id: str) -> None:
+def _prune_progress(db: Session, paper_id: str, card_ids: set[str]) -> None:
+    """Keep Known / Need revision marks for cards that are still in the new
+    deck (same question, same id); drop marks for cards that are gone."""
     progress = get_artifact(db, paper_id, "flashcard_progress")
     if progress:
-        progress.content = {"states": {}}
+        states = (progress.content or {}).get("states", {})
+        progress.content = {"states": {cid: st for cid, st in states.items() if cid in card_ids}}
         progress.updated_at = _now()
 
 

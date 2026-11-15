@@ -469,7 +469,8 @@ function ResearchPage() {
       updateMessage("research", aId, { status: "done", steps: [], answer: `**Error:** ${msg}` });
       // Only a server answer settles it. A dropped connection (a reload, closing the tab)
       // leaves the question marked as running, so it can be picked up when it finishes.
-      if (typeof err?.status === "number") rememberSession(undefined, startedAt);
+      // (status 0 means no response at all, e.g. the request was cancelled by a reload)
+      if (typeof err?.status === "number" && err.status > 0) rememberSession(undefined, startedAt);
     } finally {
       setSending(false);
     }

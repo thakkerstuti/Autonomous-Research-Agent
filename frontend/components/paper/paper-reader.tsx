@@ -20,6 +20,7 @@ import { SummaryView } from "@/components/paper/study/summary-view";
 import { FlashcardsView } from "@/components/paper/study/flashcards-view";
 import { QuestionsView } from "@/components/paper/study/questions-view";
 import { HighlightsView } from "@/components/paper/study/highlights-view";
+import { StudyStatusStrip } from "@/components/paper/study/study-shared";
 
 const IN_PROGRESS = new Set(["pending", "processing"]);
 const LEVELS = ["Beginner", "Medium", "Pro"] as const;
@@ -214,6 +215,7 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
             ))}
           </div>
         )}
+        {total > 0 && <StudyStatusStrip paperId={paperId} />}
         {tab === "read" && total > 0 && working && (
           <div
             className="mt-3 h-1 overflow-hidden rounded-full bg-ink/[0.07]"

@@ -132,3 +132,34 @@ export function groupByCategory<T extends { category: string }>(items: T[], orde
     .map(({ key, label }) => ({ key, label, items: items.filter((i) => i.category === key) }))
     .filter((g) => g.items.length > 0);
 }
+
+// ───────── per-section status for the automatic study kit ─────────
+
+export type SectionState = "not_started" | "waiting" | "generating" | "ready" | "failed";
+
+export const SECTION_LABEL: Record<OutputKind, string> = {
+  summary: "Summary",
+  flashcards: "Flashcards",
+  questions: "Q&A",
+  highlights: "Highlights",
+};
+
+/** Waiting = queued or still reading the paper; Generating = being written now. */
+export function sectionState(kit: KitStatus | undefined | null, kind: OutputKind): SectionState {
+  const out = kit?.outputs?.[kind];
+  if (!kit || kit.status === "not_started" || !out) return "not_started";
+  if (out.status === "ready") return "ready";
+  if (out.status === "failed") return "failed";
+  if (out.status === "processing") return "generating";
+  return "waiting";
+}
+
+/** Overall kit progress: every chunk read and every section written counts as one step. */
+export function kitProgress(kit: KitStatus | undefined | null) {
+  if (!kit || kit.status === "not_started") return { done: 0, total: 0, pct: 0 };
+  const outs = OUTPUT_KINDS.map((k) => kit.outputs[k]).filter(Boolean) as { status: ArtifactStatus }[];
+  const settled = (s: ArtifactStatus) => s === "ready" || s === "failed";
+  const done = kit.chunks.ready + kit.chunks.failed + outs.filter((o) => settled(o.status)).length;
+  const total = kit.chunks.total + outs.length;
+  return { done, total, pct: total ? Math.round((done / total) * 100) : 0 };
+}

@@ -239,3 +239,19 @@ def test_update_profile_name(client):
     token = register(client).json()["access_token"]
     r = client.patch("/auth/me", json={"name": "  Ada   Lovelace "}, headers={**HEADERS, **bearer(token)})
     assert r.status_code == 200 and r.json()["name"] == "Ada Lovelace"
+
+
+
+def test_cors_preflight_allows_every_method_the_api_uses(client):
+    """Production calls the API cross-origin (Vercel to Render), so every route
+    method must pass the browser preflight. PUT was once missing, and flashcard
+    progress failed in the browser with "Failed to fetch"."""
+    spec = client.get("/openapi.json").json()
+    methods = {m.upper() for ops in spec["paths"].values() for m in ops}
+    assert "PUT" in methods
+    for method in sorted(methods):
+        r = client.options("/papers/x/study/flashcards/progress", headers={
+            "Origin": "http://localhost:3001", "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": "authorization,content-type"})
+        assert r.status_code == 200, method
+        assert method in r.headers["access-control-allow-methods"], method

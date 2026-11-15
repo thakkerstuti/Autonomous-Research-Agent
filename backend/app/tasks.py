@@ -344,6 +344,8 @@ def enqueue_paper(paper_id: str, level: str) -> None:
 
 _study_queue: "queue.Queue[str]" = queue.Queue()
 _study_queued: set[str] = set()
+_study_running: set[str] = set()
+_study_rerun: set[str] = set()
 _study_worker: threading.Thread | None = None
 
 
@@ -356,12 +358,19 @@ def _run_study_worker() -> None:
             continue
         with _lock:
             _study_queued.discard(paper_id)
+            _study_running.add(paper_id)
         try:
             generate_study_kit_job(paper_id)
         except Exception as exc:  # the worker must never die
             log.error("study worker error %s", type(exc).__name__)
         finally:
+            with _lock:
+                _study_running.discard(paper_id)
+                again = paper_id in _study_rerun
+                _study_rerun.discard(paper_id)
             _study_queue.task_done()
+            if again:
+                enqueue_study(paper_id)
 
 
 def enqueue_study(paper_id: str) -> None:
@@ -373,6 +382,9 @@ def enqueue_study(paper_id: str) -> None:
         return
     with _lock:
         if paper_id in _study_queued:
+            return  # already waiting
+        if paper_id in _study_running:
+            _study_rerun.add(paper_id)  # picks up newly pending rows once the current run ends
             return
         _study_queued.add(paper_id)
         if _study_worker is None or not _study_worker.is_alive():
