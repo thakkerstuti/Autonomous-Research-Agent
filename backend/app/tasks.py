@@ -19,7 +19,7 @@ import random
 import threading
 import time
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -39,12 +39,36 @@ BATCH_SIZE = 3
 PAGE_CHAR_LIMIT = 12_000
 
 
+class NamedNote(BaseModel):
+    name: str
+    explanation: str
+
+
 class PageAnalysis(BaseModel):
+    """Schema sent to Gemini as response_schema.
+
+    Terms and figures are lists of {name, explanation} objects, not dicts: a
+    dict field becomes JSON-schema `additionalProperties`, which the Gemini
+    Developer API (our GEMINI_API_KEY) rejects. They are stored as the same
+    {name: explanation} mapping as before (see as_mapping).
+    """
     page_number: int
     summary: str
     key_points: list[str] = Field(default_factory=list)
-    terms: dict[str, str] = Field(default_factory=dict)
-    figures: dict[str, str] = Field(default_factory=dict)
+    terms: list[NamedNote] = Field(default_factory=list, description="Technical terms on the page, each with a short definition.")
+    figures: list[NamedNote] = Field(default_factory=list, description="Figures, equations or tables on the page, each with a one-line explanation.")
+
+    @field_validator("terms", "figures", mode="before")
+    @classmethod
+    def _accept_mapping(cls, value):
+        # Also accept the older {name: explanation} form (e.g. local mock output)
+        if isinstance(value, dict):
+            return [{"name": str(k), "explanation": str(v)} for k, v in value.items()]
+        return value
+
+    @staticmethod
+    def as_mapping(notes: list["NamedNote"]) -> dict[str, str]:
+        return {n.name.strip(): n.explanation.strip() for n in notes if n.name.strip()}
 
 
 class BatchAnalysis(BaseModel):
@@ -158,7 +182,7 @@ PAGES TO ANALYZE:
     for num, text in page_texts.items():
         prompt += f"\n--- PAGE {num} ---\n{text[:PAGE_CHAR_LIMIT] if text else '[No text on this page]'}\n"
     prompt += """
-For EACH page number listed, return: a summary explaining the page at the requested level, 2 to 5 key points, any technical terms defined or used on the page (term -> short definition), and any figures, equations or tables (name -> one-line explanation).
+For EACH page number listed, return: a summary explaining the page at the requested level, 2 to 5 key points, the technical terms defined or used on the page (each with a name and a short explanation), and any figures, equations or tables (each with a name and a one-line explanation).
 If a page is blank, a reference list, or has no meaningful text, say so honestly in the summary instead of inventing content.
 """
     return prompt
@@ -167,8 +191,8 @@ If a page is blank, a reference list, or has no meaningful text, say so honestly
 def _apply(summary: PageSummary, analysis: PageAnalysis) -> None:
     summary.summary = analysis.summary
     summary.key_points = analysis.key_points
-    summary.terms = analysis.terms
-    summary.figures = analysis.figures
+    summary.terms = PageAnalysis.as_mapping(analysis.terms)
+    summary.figures = PageAnalysis.as_mapping(analysis.figures)
     summary.status = "ready"
     summary.error = None
 
@@ -246,7 +270,7 @@ def generate_summaries_job(paper_id: str, level: str) -> None:
                 if analysis is not None:
                     _apply(s, analysis)
                     prev_summary = analysis.summary
-                    glossary.update(analysis.terms)
+                    glossary.update(PageAnalysis.as_mapping(analysis.terms))
                     done += 1
                 elif s.status != "failed":
                     s.status = "failed"
