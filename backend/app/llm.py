@@ -21,9 +21,9 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 load_dotenv()
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
-FALLBACK_MODEL = "gemini-3.1-flash-lite"
-MODELS = [MODEL, FALLBACK_MODEL, "gemini-flash-latest"]
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+FALLBACK_MODEL = "gemini-3.8-flash"
+MODELS = [MODEL, FALLBACK_MODEL, "gemini-3.5-flash"]
 
 def get_genai_client():
     api_key = os.getenv("GEMINI_API_KEY")
@@ -145,6 +145,7 @@ def _call_gemini(prompt: str, schema):
         )
 
     last_error = None
+    quota_exhausted = False
     for model in MODELS:
         for attempt in range(2):
             try:
@@ -162,6 +163,8 @@ def _call_gemini(prompt: str, schema):
                 last_error = e
                 is_429 = getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e).upper()
                 is_unavailable = getattr(e, "code", None) == 503 or "UNAVAILABLE" in str(e).upper()
+                if is_429:
+                    quota_exhausted = True
                 if (is_429 or is_unavailable) and attempt == 0:
                     time.sleep(2)
                     continue
@@ -172,6 +175,12 @@ def _call_gemini(prompt: str, schema):
             except Exception as exc:
                 last_error = exc
                 break  # try fallback model
+
+    if quota_exhausted:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Gemini API daily request limit exceeded on Free Tier: {str(last_error)[:160]}. Please retry after the quota reset window.",
+        )
     raise HTTPException(
         status_code=503,
         detail=f"All Gemini models unavailable: {str(last_error)[:200]}. Please try again later.",

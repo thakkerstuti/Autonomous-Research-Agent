@@ -9,6 +9,7 @@ os.environ["DATABASE_URL"] = "sqlite:///backend/cognexa.db"
 from app.main import app
 from app.database import SessionLocal, engine
 from app import models
+from app.auth.deps import get_current_user
 from app.research import run_research, _verify_source_content, _compute_status, deduplicate_evidence_by_study
 from app.llm import critique_report, write_report, review_contradiction
 from app.schemas import ConflictReviewResponse
@@ -18,7 +19,18 @@ class TestResearchMode(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         models.Base.metadata.create_all(bind=engine)
+        cls.test_user = models.User(
+            id="test-user-id",
+            email="test@example.com",
+            name="Test User",
+            email_verified=True,
+        )
+        app.dependency_overrides[get_current_user] = lambda: cls.test_user
         cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls):
+        app.dependency_overrides.clear()
 
     def setUp(self):
         self.db = SessionLocal()
