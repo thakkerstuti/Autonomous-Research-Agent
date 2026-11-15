@@ -71,8 +71,12 @@ def gemini(monkeypatch):
     return fake
 
 
-def upload(client, token, data: bytes, name="paper.pdf", ctype="application/pdf", level="Medium"):
-    return client.post("/papers", headers=bearer(token), files={"file": (name, data, ctype)}, data={"level": level})
+def upload(client, token, data: bytes, name="paper.pdf", ctype="application/pdf", level="Medium", explain=True):
+    """Upload, then (by default) ask for page explanations the way opening Page summaries does."""
+    r = client.post("/papers", headers=bearer(token), files={"file": (name, data, ctype)}, data={"level": level})
+    if explain and r.status_code == 200 and r.json().get("text_pages"):
+        client.post(f"/papers/{r.json()['id']}/explain", headers=bearer(token))
+    return r
 
 
 # ───────── upload + extraction ─────────
@@ -340,3 +344,38 @@ def test_same_job_queued_twice_runs_once(monkeypatch):
     tasks.enqueue_paper("p1", "Medium")
     tasks.enqueue_paper("p1", "Pro")
     assert tasks._queue.qsize() == 2  # (p1, Medium) once, (p1, Pro) once
+
+
+
+# ───────── page explanations on demand ─────────
+
+def test_upload_does_not_explain_pages_until_asked(client, user, gemini):
+    pid = upload(client, user, text_pdf(3), explain=False).json()["id"]
+    assert gemini.pages_sent() == []  # extraction only
+    db = SessionLocal()
+    assert db.query(models.PageSummary).filter_by(paper_id=pid).count() == 0
+    db.close()
+    outline = client.get(f"/papers/{pid}/outline", headers=bearer(user)).json()
+    assert [(p["page_number"], p["has_text"], p["explanation"]) for p in outline["pages"]] == [(1, True, None), (2, True, None), (3, True, None)]
+    assert client.get(f"/papers/{pid}", headers=bearer(user)).json()["status"] == "ready"
+
+    r = client.post(f"/papers/{pid}/explain", headers=bearer(user)).json()
+    assert r["requested"] == 3 and sorted(gemini.pages_sent()) == [1, 2, 3]
+    outline = client.get(f"/papers/{pid}/outline", headers=bearer(user)).json()
+    assert [p["explanation"] for p in outline["pages"]] == ["ready", "ready", "ready"]
+    # asking again never re-explains
+    again = client.post(f"/papers/{pid}/explain", headers=bearer(user)).json()
+    assert again["requested"] == 0 and sorted(gemini.pages_sent()) == [1, 2, 3]
+
+
+def test_page_text_endpoint_returns_extracted_text(client, user, gemini):
+    pid = upload(client, user, text_pdf(2), explain=False).json()["id"]
+    page = client.get(f"/papers/{pid}/pages/2/text", headers=bearer(user)).json()
+    assert page["page_number"] == 2 and page["status"] == "ready" and "Page 2." in page["text"]
+    assert client.get(f"/papers/{pid}/pages/9/text", headers=bearer(user)).status_code == 404
+    assert gemini.calls == []
+
+
+def test_explain_refuses_scanned_pdf(client, user, gemini):
+    pid = upload(client, user, mixed_pdf(0, 1), explain=False).json()["id"]
+    assert client.post(f"/papers/{pid}/explain", headers=bearer(user)).status_code == 400

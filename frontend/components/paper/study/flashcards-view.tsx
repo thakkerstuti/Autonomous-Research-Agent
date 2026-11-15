@@ -91,12 +91,12 @@ function Deck({ paperId, version, onOpenPage }: { paperId: string; version: stri
       </div>
     );
   }
-  if (!cards.length) return <SectionShell><EmptyOutput text="No flashcards could be made from this paper." /></SectionShell>;
+  if (!cards.length) return <EmptyOutput text="No flashcards could be made from this paper." />;
 
   return (
-    <SectionShell>
+    <div className="animate-view-in mt-7">
       {/* Progress */}
-      <div className="animate-view-in flex flex-wrap items-end justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-[220px] flex-1">
           <div className="flex items-baseline justify-between text-[13px]">
             <span className="text-ink-soft">
@@ -128,7 +128,7 @@ function Deck({ paperId, version, onOpenPage }: { paperId: string; version: stri
       </div>
 
       {!card ? (
-        <div className="mt-8"><EmptyOutput text="Nothing marked to revise. Mark cards with “Need revision” to collect them here." /></div>
+        <div><EmptyOutput text="Nothing marked to revise. Mark cards with “Need revision” to collect them here." /></div>
       ) : (
         <>
           {/* The card */}
@@ -146,7 +146,7 @@ function Deck({ paperId, version, onOpenPage }: { paperId: string; version: stri
                 )}
                 style={{ transitionTimingFunction: "cubic-bezier(0.32, 0.72, 0, 1)" }}
               >
-                <div className="absolute inset-0 flex flex-col rounded-[22px] bg-surface p-7 shadow-panel [backface-visibility:hidden] sm:p-8">
+                <div className="absolute inset-0 flex flex-col rounded-xl border border-line bg-surface p-7 [backface-visibility:hidden] sm:p-8">
                   <div className="flex items-center justify-between">
                     <span className="col-label">{CARD_CATEGORY_LABEL[card.category] ?? "Card"} · Question</span>
                     {states[card.id] && (
@@ -158,7 +158,7 @@ function Deck({ paperId, version, onOpenPage }: { paperId: string; version: stri
                   <p className="my-auto font-display text-[22px] font-semibold leading-snug tracking-[-0.02em] text-ink">{card.question}</p>
                   <span className="text-[12.5px] text-ink-faint">Click or press Space to reveal the answer</span>
                 </div>
-                <div className="absolute inset-0 flex flex-col rounded-[22px] bg-surface p-7 shadow-panel [backface-visibility:hidden] [transform:rotateY(180deg)] sm:p-8">
+                <div className="absolute inset-0 flex flex-col rounded-xl border border-line bg-surface p-7 [backface-visibility:hidden] [transform:rotateY(180deg)] sm:p-8">
                   <span className="col-label">Answer</span>
                   <p className="my-auto font-serif text-[18px] leading-[1.6] text-ink">{card.answer}</p>
                   <span className="text-[12.5px] text-ink-faint">Click to see the question again</span>
@@ -224,14 +224,16 @@ function Deck({ paperId, version, onOpenPage }: { paperId: string; version: stri
         )}
         {actions.error && <span role="alert" className="text-bad">{actions.error}</span>}
       </div>
-    </SectionShell>
+    </div>
   );
 }
 
 export function FlashcardsView({ paperId, onOpenPage }: { paperId: string; onOpenPage: (p: number) => void }) {
   return (
-    <KitGate paperId={paperId} kind="flashcards" title="Flashcards">
-      {({ version }) => <Deck key={version ?? "v"} paperId={paperId} version={version} onOpenPage={onOpenPage} />}
-    </KitGate>
+    <SectionShell title="Flashcards" meta="Flip, then mark each card. Your progress is saved.">
+      <KitGate paperId={paperId} kind="flashcards" title="Flashcards">
+        {({ version }) => <Deck key={version ?? "v"} paperId={paperId} version={version} onOpenPage={onOpenPage} />}
+      </KitGate>
+    </SectionShell>
   );
 }

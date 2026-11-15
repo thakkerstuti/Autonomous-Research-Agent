@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  outputView, isWorking, formatPages, deckProgress, visibleCards, clampIndex, nextCardState,
+  formatPages, deckProgress, visibleCards, clampIndex, nextCardState,
   groupByCategory, QUESTION_CATEGORIES, HIGHLIGHT_CATEGORIES,
 } from "../lib/study-logic.ts";
 
@@ -15,34 +15,6 @@ const kit = (overrides) => ({
   pages_covered: 30,
   text_pages: 30,
   ...overrides,
-});
-
-test("not started: no kit yet", () => {
-  assert.deepEqual(outputView(undefined, "summary"), { state: "not_started" });
-  assert.deepEqual(outputView(kit({ status: "not_started", outputs: { summary: null } }), "summary"), { state: "not_started" });
-});
-
-test("loading: map step reports real chunk progress", () => {
-  const k = kit({
-    status: "processing",
-    chunks: { total: 5, pending: 2, processing: 1, ready: 2, failed: 0 },
-    outputs: { summary: out("pending"), flashcards: out("pending"), questions: out("pending"), highlights: out("pending") },
-  });
-  assert.deepEqual(outputView(k, "flashcards"), { state: "working", step: "reading", done: 2, total: 5 });
-  assert.equal(isWorking(k), true);
-});
-
-test("loading: reduce step counts finished outputs", () => {
-  const k = kit({ status: "processing", outputs: { summary: out("ready"), flashcards: out("processing"), questions: out("pending"), highlights: out("failed", "x") } });
-  assert.deepEqual(outputView(k, "questions"), { state: "working", step: "writing", done: 2, total: 4 });
-  assert.equal(outputView(k, "summary").state, "ready"); // finished outputs show while others work
-});
-
-test("failed and partial states", () => {
-  const k = kit({ status: "partial", chunks: { total: 3, pending: 0, processing: 0, ready: 2, failed: 1 }, outputs: { summary: out("ready"), flashcards: out("failed", "The AI service is busy."), questions: out("ready"), highlights: out("ready") } });
-  assert.deepEqual(outputView(k, "flashcards"), { state: "failed", error: "The AI service is busy." });
-  assert.deepEqual(outputView(k, "summary"), { state: "ready", partial: true });
-  assert.deepEqual(outputView(kit({}), "summary"), { state: "ready", partial: false });
 });
 
 test("page references are compact and clean", () => {

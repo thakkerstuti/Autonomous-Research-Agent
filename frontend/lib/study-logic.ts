@@ -26,29 +26,6 @@ export interface Card {
   pages: number[];
 }
 
-/** What a study tab should show for one output. */
-export type OutputView =
-  | { state: "not_started" }
-  | { state: "working"; step: "reading" | "writing"; done: number; total: number }
-  | { state: "failed"; error: string }
-  | { state: "ready"; partial: boolean };
-
-export function outputView(kit: KitStatus | undefined | null, kind: OutputKind): OutputView {
-  const out = kit?.outputs?.[kind];
-  if (!kit || kit.status === "not_started" || !out) return { state: "not_started" };
-  if (out.status === "ready") return { state: "ready", partial: kit.chunks.failed > 0 };
-  if (out.status === "failed") return { state: "failed", error: out.error || "This couldn't be generated. Retry it." };
-  const c = kit.chunks;
-  // Map step first (reading the paper part by part), then the outputs are written
-  if (c.pending + c.processing > 0) return { state: "working", step: "reading", done: c.ready + c.failed, total: c.total };
-  const outs = OUTPUT_KINDS.map((k) => kit.outputs[k]).filter(Boolean) as { status: ArtifactStatus }[];
-  return { state: "working", step: "writing", done: outs.filter((o) => o.status === "ready" || o.status === "failed").length, total: outs.length };
-}
-
-export function isWorking(kit: KitStatus | undefined | null): boolean {
-  return kit?.status === "processing";
-}
-
 /** "p. 3", "pp. 3, 5–7" */
 export function formatPages(pages: number[] | null | undefined): string {
   const sorted = [...new Set((pages ?? []).filter((p) => Number.isInteger(p) && p > 0))].sort((a, b) => a - b);

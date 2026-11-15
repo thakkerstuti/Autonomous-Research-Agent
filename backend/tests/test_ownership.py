@@ -48,6 +48,7 @@ def test_user_b_cannot_touch_user_a_papers(client, two_users):
     up = client.post("/papers", headers=bearer(a), files={"file": ("study.pdf", _pdf_bytes(), "application/pdf")}, data={"level": "Medium"})
     assert up.status_code == 200, up.text
     pid = up.json()["id"]
+    client.post(f"/papers/{pid}/explain", headers=bearer(a))  # explanations are requested from Page summaries
 
     db = SessionLocal()
     owner = db.query(models.User).filter(models.User.email == "a@example.com").one()
@@ -63,6 +64,7 @@ def test_user_b_cannot_touch_user_a_papers(client, two_users):
     for method, path in [
         ("get", f"/papers/{pid}"), ("get", f"/papers/{pid}/file"), ("get", f"/papers/{pid}/pages"),
         ("get", f"/papers/{pid}/pages/1"), ("post", f"/papers/{pid}/pages/1/regenerate"), ("get", f"/papers/{pid}/progress"),
+        ("get", f"/papers/{pid}/outline"), ("get", f"/papers/{pid}/pages/1/text"), ("post", f"/papers/{pid}/explain"),
     ]:
         assert getattr(client, method)(path, headers=bearer(b)).status_code == 404, path
     assert client.patch(f"/papers/{pid}", headers=bearer(b), data={"level": "Easy"}).status_code == 404

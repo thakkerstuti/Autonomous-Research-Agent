@@ -134,14 +134,12 @@ def upload_paper(
         page_count=page_count,
         file_size=size,
         level=level,
-        status="processing" if text_pages else "needs_ocr",
+        status="ready" if text_pages else "needs_ocr",
     )
     db.add(paper)
     db.flush()
     for number, text, st in extracted:
         db.add(models.PaperPage(paper_id=paper.id, page_number=number, text=text, status=st))
-        if st == "ready":
-            db.add(models.PageSummary(paper_id=paper.id, page_number=number, level=level, status="pending"))
     db.commit()
 
     path = os.path.join(UPLOAD_DIR, f"{paper.id}.pdf")
@@ -160,15 +158,14 @@ def upload_paper(
         paper.id, user.id[:8], size, page_count, text_pages, no_text, image_only, failed_extract, level,
     )
     if text_pages:
-        tasks.enqueue_paper(paper.id, level)
-        # The study kit (summary, flashcards, Q&A, highlights) starts right away,
-        # in its own worker, alongside the page explanations
-        study.ensure_kit(db, paper.id)
+        # Only the paper summary starts on its own. Page explanations, flashcards,
+        # questions and insights are generated when the reader asks for them.
+        study.ensure_kit(db, paper.id, study.AUTO_OUTPUTS)
         tasks.enqueue_study(paper.id)
 
     return {
         "id": paper.id,
-        "message": "Queued for processing." if text_pages else "No selectable text found; OCR is required.",
+        "message": "Text extracted; the summary is being written." if text_pages else "No selectable text found; OCR is required.",
         "status": paper.status,
         "page_count": page_count,
         "text_pages": text_pages,
@@ -224,6 +221,69 @@ def get_paper_pages(paper_id: str, db: Session = Depends(get_db), user: models.U
         models.PageSummary.level == paper.level
     ).order_by(models.PageSummary.page_number).all()
     return {"pages": [{"page_number": s.page_number, "status": s.status} for s in summaries]}
+
+
+@router.get("/{paper_id}/outline")
+def get_paper_outline(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Every page of the PDF with whether it has text and its explanation state
+    (at the paper's level). Read-only: never starts any processing."""
+    paper = _owned_paper(db, paper_id, user)
+    explained = {
+        s.page_number: s.status
+        for s in db.query(models.PageSummary).filter(
+            models.PageSummary.paper_id == paper_id, models.PageSummary.level == paper.level
+        )
+    }
+    pages = db.query(models.PaperPage).filter(models.PaperPage.paper_id == paper_id).order_by(models.PaperPage.page_number)
+    return {
+        "paper_id": paper.id,
+        "level": paper.level,
+        "pages": [
+            {
+                "page_number": p.page_number,
+                "has_text": p.status == "ready",
+                "explanation": explained.get(p.page_number) if p.status == "ready" else None,
+            }
+            for p in pages
+        ],
+    }
+
+
+@router.get("/{paper_id}/pages/{page_number}/text")
+def get_page_text(paper_id: str, page_number: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """The text extracted from one page (shown when the original PDF file isn't available)."""
+    _owned_paper(db, paper_id, user)
+    page = db.query(models.PaperPage).filter(
+        models.PaperPage.paper_id == paper_id, models.PaperPage.page_number == page_number
+    ).first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return {"page_number": page.page_number, "status": page.status, "text": page.text or ""}
+
+
+@router.post("/{paper_id}/explain")
+def explain_pages(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Start page-by-page explanations at the paper's level, when the reader opens
+    them. Idempotent: pages already queued, running or explained are untouched."""
+    paper = _owned_paper(db, paper_id, user)
+    pages = db.query(models.PaperPage).filter(models.PaperPage.paper_id == paper_id, models.PaperPage.status == "ready").all()
+    if not pages:
+        raise HTTPException(status_code=400, detail="This PDF has no selectable text, so there is nothing to explain.")
+    existing = {
+        s.page_number
+        for s in db.query(models.PageSummary).filter(models.PageSummary.paper_id == paper_id, models.PageSummary.level == paper.level)
+    }
+    added = 0
+    for page in pages:
+        if page.page_number not in existing:
+            db.add(models.PageSummary(paper_id=paper_id, page_number=page.page_number, level=paper.level, status="pending"))
+            added += 1
+    db.commit()
+    status = tasks.refresh_paper_status(db, paper)
+    if added:
+        tasks.enqueue_paper(paper.id, paper.level)
+        log.info("explanations requested paper=%s level=%s pages=%d", paper.id, paper.level, added)
+    return {"paper_id": paper.id, "level": paper.level, "requested": added, "status": status}
 
 
 @router.get("/{paper_id}/status")

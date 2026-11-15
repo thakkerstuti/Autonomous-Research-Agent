@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { UploadCloud, FileText, AlertCircle, Loader2, Check, ArrowLeft } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { PaperReader } from "@/components/paper/paper-reader";
+import { PaperWorkspace } from "@/components/paper/workspace/paper-workspace";
 import { usePapersQuery } from "@/lib/queries";
 import { readWorkspace, updateWorkspace } from "@/lib/workspace";
 import { MAX_PDF_MB, MAX_PDF_PAGES, UploadPhase, uploadPaper } from "@/lib/paper-upload";
@@ -223,7 +223,7 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
   };
 
   if (step === "study" && paperId) {
-    return <PaperReader key={paperId} paperId={paperId} onStudyAnother={studyAnother} />;
+    return <PaperWorkspace key={paperId} paperId={paperId} onStudyAnother={studyAnother} />;
   }
 
   if (step === "level" && file) {

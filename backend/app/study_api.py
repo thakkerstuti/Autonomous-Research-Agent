@@ -24,7 +24,10 @@ class ProgressBody(BaseModel):
 
 
 class AskBody(BaseModel):
-    question: str = Field(min_length=3, max_length=500)
+    question: str = Field(default="", max_length=500)
+    action: Literal["ask", "explain_page", "summarize_pages", "compare_pages", "explain_selection"] = "ask"
+    pages: list[int] = Field(default_factory=list, max_length=5)
+    selection: str | None = Field(default=None, max_length=2000)
 
 
 def _require_text(db: Session, paper: models.Paper) -> None:
@@ -49,6 +52,23 @@ def start_study_kit(paper_id: str, db: Session = Depends(get_db), user: models.U
     if status["status"] == "processing":
         tasks.enqueue_study(paper.id)
         log.info("study queued paper=%s chunks=%d", paper.id, status["chunks"]["total"])
+    return study.kit_status(db, paper.id)
+
+
+@router.post("/{paper_id}/study/{kind}/generate")
+def generate_study_output(paper_id: str, kind: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Generate one section when the reader first opens it. Idempotent: a section
+    that is queued, running or finished is never generated again by this call."""
+    paper = _owned_paper(db, paper_id, user)
+    if kind not in study.OUTPUTS:
+        raise HTTPException(status_code=404, detail="Unknown study section")
+    _require_text(db, paper)
+    created = study.ensure_kit(db, paper.id, (kind,))
+    status = study.kit_status(db, paper.id)
+    if created or status["status"] == "processing":
+        limiter.hit(f"study:user:{user.id}", 30, 3600)
+        tasks.enqueue_study(paper.id)
+        log.info("study section requested paper=%s kind=%s new=%s", paper.id, kind, bool(created))
     return study.kit_status(db, paper.id)
 
 
@@ -124,10 +144,23 @@ def list_asks(paper_id: str, db: Session = Depends(get_db), user: models.User = 
 def ask_paper(paper_id: str, body: AskBody, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     paper = _owned_paper(db, paper_id, user)
     _require_text(db, paper)
-    limiter.hit(f"ask:user:{user.id}", 20, 600)
     question = " ".join(body.question.split())
+    pages = sorted(set(body.pages))
+    if body.action == "ask" and len(question) < 3:
+        raise HTTPException(status_code=422, detail="Ask a question of at least 3 characters.")
+    if body.action == "explain_page" and len(pages) != 1:
+        raise HTTPException(status_code=422, detail="Choose one page to explain.")
+    if body.action == "summarize_pages" and not pages:
+        raise HTTPException(status_code=422, detail="Choose at least one page to summarise.")
+    if body.action == "compare_pages" and len(pages) < 2:
+        raise HTTPException(status_code=422, detail="Choose at least two pages to compare.")
+    if body.action == "explain_selection" and (not body.selection or len(body.selection.strip()) < 3 or len(pages) != 1):
+        raise HTTPException(status_code=422, detail="Select some text on one page to explain.")
+    if any(p < 1 or (paper.page_count and p > paper.page_count) for p in pages):
+        raise HTTPException(status_code=422, detail="That page isn't in this paper.")
+    limiter.hit(f"ask:user:{user.id}", 20, 600)
     try:
-        entry = study.answer_question(db, paper, question)
+        entry = study.answer_question(db, paper, question, body.action, pages, (body.selection or "").strip() or None)
     except Exception as exc:  # includes the model wrapper's own HTTPException: never pass its detail through
         db.rollback()
         log.warning("ask failed paper=%s error=%s", paper.id, type(exc).__name__)

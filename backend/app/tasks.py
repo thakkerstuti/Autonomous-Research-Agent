@@ -108,6 +108,8 @@ def refresh_paper_status(db: Session, paper: Paper) -> str:
 
     if text_pages == 0:
         status = "needs_ocr"
+    elif not statuses:
+        status = "ready"  # text extracted; explanations not requested yet
     elif any(s in ("pending", "processing") for s in statuses):
         status = "processing"
     elif statuses and all(s == "ready" for s in statuses):

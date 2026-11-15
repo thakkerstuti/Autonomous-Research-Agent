@@ -18,7 +18,15 @@ export interface PendingResearch {
 }
 
 export interface Workspace {
-  paper?: { id: string; page?: number; tab?: string } | null;
+  paper?: {
+    id: string;
+    page?: number;
+    tab?: string;
+    /** Paper Study workspace: open section, reader layout, assistant visibility */
+    view?: string;
+    reader?: unknown;
+    assistant?: boolean;
+  } | null;
   research?: { sessionIds: string[]; pending?: PendingResearch | null } | null;
 }
 

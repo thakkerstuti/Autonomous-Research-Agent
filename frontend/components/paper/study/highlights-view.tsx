@@ -2,11 +2,10 @@
 
 import { useStudyOutputQuery } from "@/lib/queries";
 import { groupByCategory, HIGHLIGHT_CATEGORIES } from "@/lib/study-logic";
-import { ThinkingMark } from "@/components/research/thinking-mark";
 import { cn } from "@/lib/utils";
-import { EmptyOutput, KitGate, PageRefs, SectionShell } from "./study-shared";
+import { EmptyOutput, KitGate, PageRefs, SectionShell, TextSkeleton } from "./study-shared";
 
-interface HighlightItem {
+interface Insight {
   id: string;
   category: string;
   text: string;
@@ -16,47 +15,47 @@ interface HighlightItem {
 
 const NUMERIC = new Set(["statistic", "formula"]);
 
-function HighlightsBody({ paperId, version, onOpenPage }: { paperId: string; version: string | null; onOpenPage: (p: number) => void }) {
-  const q = useStudyOutputQuery<{ highlights: HighlightItem[] }>(paperId, "highlights", version, true);
-  if (!q.data?.content) {
-    return (
-      <div className="flex items-center gap-3 px-6 py-16 text-[14px] text-ink-soft" role="status">
-        <ThinkingMark active size={18} /> Loading highlights…
-      </div>
-    );
-  }
+function Insights({ paperId, version, onOpenPage }: { paperId: string; version: string | null; onOpenPage: (p: number) => void }) {
+  const q = useStudyOutputQuery<{ highlights: Insight[] }>(paperId, "highlights", version, true);
+  if (!q.data?.content) return <TextSkeleton />;
   const groups = groupByCategory(q.data.content.highlights, HIGHLIGHT_CATEGORIES);
-  if (!groups.length) return <SectionShell><EmptyOutput text="No highlights could be drawn from this paper." /></SectionShell>;
+  if (!groups.length) return <EmptyOutput text="No insights could be drawn from this paper." />;
 
   return (
-    <SectionShell>
-      <div className="grid gap-10">
-        {groups.map((g) => (
-          <section key={g.key} aria-labelledby={`hl-${g.key}`}>
-            <h2 id={`hl-${g.key}`} className="col-label mb-3">{g.label}</h2>
-            <ul className="grid gap-2.5">
-              {g.items.map((h) => (
-                <li key={h.id} className="relative rounded-2xl bg-surface py-4 pl-6 pr-5 shadow-sm">
-                  <span aria-hidden className="absolute bottom-4 left-0 top-4 w-[3px] rounded-r-full bg-accent/70" />
-                  <p className={cn("leading-relaxed text-ink", NUMERIC.has(h.category) ? "font-mono text-[14.5px]" : "text-[15px] font-medium")}>{h.text}</p>
-                  <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                    {h.why && <p className="text-[13px] leading-relaxed text-ink-soft">{h.why}</p>}
-                    <PageRefs pages={h.pages} onOpenPage={onOpenPage} className="ml-auto" />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
-    </SectionShell>
+    <div className="animate-view-in mt-8 grid gap-10">
+      {groups.map((g) => (
+        <section key={g.key} aria-labelledby={`in-${g.key}`}>
+          <h2 id={`in-${g.key}`} className="col-label">{g.label}</h2>
+          <ul className="mt-2 border-t border-line">
+            {g.items.map((h) => (
+              <li key={h.id} className="group grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 border-b border-line py-3.5">
+                {/* Clicking an insight takes the reader to its source page */}
+                <button
+                  type="button"
+                  onClick={() => h.pages[0] && onOpenPage(h.pages[0])}
+                  disabled={!h.pages.length}
+                  className="text-left disabled:cursor-default"
+                  title={h.pages.length ? `Open page ${h.pages[0]}` : undefined}
+                >
+                  <span className={cn("block leading-relaxed text-ink group-hover:text-accent", NUMERIC.has(h.category) ? "font-mono text-[14px]" : "text-[15px]")}>{h.text}</span>
+                  {h.why && <span className="mt-1 block text-[13px] leading-relaxed text-ink-soft">{h.why}</span>}
+                </button>
+                <PageRefs pages={h.pages} onOpenPage={onOpenPage} className="self-start" />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
   );
 }
 
-export function HighlightsView({ paperId, onOpenPage }: { paperId: string; onOpenPage: (p: number) => void }) {
+export function InsightsView({ paperId, onOpenPage }: { paperId: string; onOpenPage: (p: number) => void }) {
   return (
-    <KitGate paperId={paperId} kind="highlights" title="Highlights">
-      {({ version }) => <HighlightsBody paperId={paperId} version={version} onOpenPage={onOpenPage} />}
-    </KitGate>
+    <SectionShell title="Key insights" meta="Findings, numbers, arguments and conclusions worth remembering, each with its source page.">
+      <KitGate paperId={paperId} kind="highlights" title="Key insights">
+        {({ version }) => <Insights paperId={paperId} version={version} onOpenPage={onOpenPage} />}
+      </KitGate>
+    </SectionShell>
   );
 }

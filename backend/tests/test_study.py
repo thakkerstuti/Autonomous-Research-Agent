@@ -58,7 +58,11 @@ class FakeStudyGemini:
             raise HTTPException(status_code=429, detail="RESOURCE_EXHAUSTED quota")
         first, last = (refs[0], refs[-1]) if refs else (1, 1)
         if name == "PaperSummary":
-            return schema(overview="An overview grounded in the notes.", sections=[
+            return schema(overview="An overview grounded in the notes.",
+                          key_findings=[{"text": "Spacing improved recall.", "pages": [last, 9999]}, {"text": "Spacing improved recall!", "pages": [first]}],
+                          key_concepts=[{"name": "Retrieval practice", "definition": "Recalling from memory.", "pages": [first]}],
+                          key_numbers=[{"text": "Recall rose 12%.", "pages": [first]}],
+                          sections=[
                 {"key": "objective", "specified": True, "body": "Studies **retrieval practice**.", "pages": [first, 9999]},
                 {"key": "methodology", "specified": True, "body": "- Spaced trials\n- Recall tests", "pages": [last]},
                 {"key": "results", "specified": True, "body": "Recall improved.", "pages": [first, last]},
@@ -104,10 +108,19 @@ def ai(monkeypatch):
     return fake
 
 
-def upload(client, token, data, name="paper.pdf"):
+ON_DEMAND = ("flashcards", "questions", "highlights")
+
+
+def upload(client, token, data, name="paper.pdf", sections=ON_DEMAND):
+    """Upload (the summary starts by itself), then open the given sections, which
+    is what generates them."""
     r = client.post("/papers", headers=bearer(token), files={"file": (name, data, "application/pdf")}, data={"level": "Medium"})
     assert r.status_code == 200, r.text
-    return r.json()["id"]
+    pid = r.json()["id"]
+    for kind in sections:
+        if r.json()["text_pages"]:
+            client.post(f"/papers/{pid}/study/{kind}/generate", headers=bearer(token))
+    return pid
 
 
 def output(client, token, pid, kind):
@@ -217,10 +230,11 @@ def test_generated_once_then_only_read(client, user, ai):
 
 def test_queued_state_right_after_upload(client, user, ai, monkeypatch):
     monkeypatch.setattr(tasks, "enqueue_study", lambda *a: None)  # queued, worker has not run yet
-    pid = upload(client, user, text_pdf(2))
+    pid = upload(client, user, text_pdf(2), sections=())
     st = client.get(f"/papers/{pid}/study", headers=bearer(user)).json()
     assert st["status"] == "processing" and st["chunks"] == {"total": 1, "pending": 1, "processing": 0, "ready": 0, "failed": 0}
-    assert all(o["status"] == "pending" for o in st["outputs"].values())
+    assert st["outputs"]["summary"]["status"] == "pending"
+    assert all(st["outputs"][k] is None for k in ("flashcards", "questions", "highlights"))
     pending = output(client, user, pid, "summary")
     assert pending["status"] == "pending" and pending["content"] is None
     assert ai.calls == []  # reading status and outputs never calls the AI
@@ -361,13 +375,58 @@ def test_other_users_cannot_reach_the_study_kit(client, user, ai):
 
 # ───────── automatic study kit ─────────
 
-def test_upload_starts_the_study_kit_automatically(client, user, ai):
-    pid = upload(client, user, text_pdf(4))
-    # nothing else was called: the upload alone produced the kit
-    assert ai.count("ChunkNotes") == 1
-    assert [ai.count(n) for n in ("PaperSummary", "FlashcardSet", "QuestionBank", "HighlightSet")] == [1, 1, 1, 1]
+def test_upload_generates_only_the_summary(client, user, ai):
+    pid = upload(client, user, text_pdf(4), sections=())
+    assert ai.count("ChunkNotes") == 1 and ai.count("PaperSummary") == 1
+    assert [ai.count(n) for n in ("FlashcardSet", "QuestionBank", "HighlightSet")] == [0, 0, 0]
     st = client.get(f"/papers/{pid}/study", headers=bearer(user)).json()
-    assert st["status"] == "ready" and all(o["status"] == "ready" for o in st["outputs"].values())
+    assert st["status"] == "ready" and st["outputs"]["summary"]["status"] == "ready"
+    assert st["outputs"]["flashcards"] is None and st["outputs"]["questions"] is None and st["outputs"]["highlights"] is None
+    assert client.get(f"/papers/{pid}/study/flashcards", headers=bearer(user)).status_code == 404
+
+
+def test_sections_generate_when_first_opened_and_only_once(client, user, ai):
+    pid = upload(client, user, text_pdf(4), sections=())
+    before = len(ai.calls)
+    st = client.post(f"/papers/{pid}/study/flashcards/generate", headers=bearer(user)).json()
+    assert st["outputs"]["flashcards"]["status"] == "ready"
+    # the paper was already read for the summary: one call, just for the flashcards
+    assert [n for n, _ in ai.calls[before:]] == ["FlashcardSet"]
+    made = len(ai.calls)
+    for _ in range(3):  # reopening the section, refreshing
+        client.post(f"/papers/{pid}/study/flashcards/generate", headers=bearer(user))
+        output(client, user, pid, "flashcards")
+    tasks.resume_unfinished()
+    assert len(ai.calls) == made
+    assert client.get(f"/papers/{pid}/study", headers=bearer(user)).json()["outputs"]["questions"] is None
+
+
+def test_failed_section_stays_failed_until_retried(client, user, monkeypatch):
+    monkeypatch.setattr(tasks, "enqueue_paper", lambda *a: None)
+    monkeypatch.setattr(study, "_call_gemini", FakeStudyGemini(fail_kinds={"questions"}))
+    pid = upload(client, user, text_pdf(3), sections=("questions",))
+    st = client.get(f"/papers/{pid}/study", headers=bearer(user)).json()
+    assert st["outputs"]["questions"]["status"] == "failed" and st["outputs"]["summary"]["status"] == "ready"
+    fixed = FakeStudyGemini()
+    monkeypatch.setattr(study, "_call_gemini", fixed)
+    client.post(f"/papers/{pid}/study/questions/generate", headers=bearer(user))  # opening it again: no silent re-run
+    assert fixed.calls == []
+    st = client.post(f"/papers/{pid}/study/retry", headers=bearer(user)).json()
+    assert st["outputs"]["questions"]["status"] == "ready" and [n for n, _ in fixed.calls] == ["QuestionBank"]
+
+
+def test_overview_parts_are_validated(client, user, ai):
+    pid = upload(client, user, text_pdf(5), sections=())
+    s = output(client, user, pid, "summary")["content"]
+    assert [f["text"] for f in s["key_findings"]] == ["Spacing improved recall."]  # near-duplicate dropped
+    assert s["key_findings"][0]["pages"] == [5]  # page 9999 removed
+    assert s["key_concepts"] == [{"name": "Retrieval practice", "definition": "Recalling from memory.", "pages": [1]}]
+    assert s["key_numbers"][0]["text"] == "Recall rose 12%."
+
+
+def test_unknown_section_cannot_be_generated(client, user, ai):
+    pid = upload(client, user, text_pdf(2), sections=())
+    assert client.post(f"/papers/{pid}/study/everything/generate", headers=bearer(user)).status_code == 404
 
 
 def test_no_duplicate_generation_on_refresh_or_repeated_requests(client, user, ai):
@@ -474,3 +533,45 @@ def test_regenerated_deck_drops_marks_only_for_removed_cards(client, user, ai, m
     fc = output(client, user, pid, "flashcards")
     assert keep in {c["id"] for c in fc["content"]["cards"]}
     assert fc["progress"] == {keep: "known"}  # unchanged card keeps its mark; the removed card's mark is gone
+
+
+
+# ───────── assistant actions on chosen pages ─────────
+
+def _pages_in(prompt):
+    return sorted(int(n) for n in re.findall(r"--- PAGE (\d+) ---", prompt))
+
+
+def test_explain_page_uses_exactly_that_page(client, user, ai):
+    pid = upload(client, user, text_pdf(6), sections=())
+    r = client.post(f"/papers/{pid}/ask", headers=bearer(user), json={"action": "explain_page", "pages": [4]})
+    assert r.status_code == 200
+    e = r.json()
+    assert e["action"] == "explain_page" and e["question"] == "Explain page 4"
+    assert e["pages_considered"] == [4] and _pages_in(ai.calls[-1][1]) == [4]
+    assert all(c["page"] == 4 for c in e["citations"])
+
+
+def test_compare_uses_the_selected_pages(client, user, ai):
+    pid = upload(client, user, text_pdf(6), sections=())
+    bad = client.post(f"/papers/{pid}/ask", headers=bearer(user), json={"action": "compare_pages", "pages": [2]})
+    assert bad.status_code == 422 and "two pages" in bad.json()["detail"]
+    r = client.post(f"/papers/{pid}/ask", headers=bearer(user), json={"action": "compare_pages", "pages": [5, 2]})
+    e = r.json()
+    assert e["question"] == "Compare pages 2 and 5" and e["pages_considered"] == [2, 5] and e["pages_requested"] == [2, 5]
+    prompt = ai.calls[-1][1]
+    assert _pages_in(prompt) == [2, 5] and "Compare page 2, page 5" in prompt
+    assert {c["page"] for c in e["citations"]} <= {2, 5}
+
+
+def test_summarize_and_explain_selection(client, user, ai):
+    pid = upload(client, user, text_pdf(4), sections=())
+    s = client.post(f"/papers/{pid}/ask", headers=bearer(user), json={"action": "summarize_pages", "pages": [1, 3]}).json()
+    assert s["question"] == "Summarise pages 1 and 3" and s["pages_considered"] == [1, 3]
+    sel = client.post(f"/papers/{pid}/ask", headers=bearer(user), json={
+        "action": "explain_selection", "pages": [2], "selection": "Retrieval practice with spacing"}).json()
+    assert sel["pages_considered"] == [2] and "Retrieval practice with spacing" in ai.calls[-1][1]
+    assert client.post(f"/papers/{pid}/ask", headers=bearer(user), json={"action": "explain_selection", "pages": [2]}).status_code == 422
+    assert client.post(f"/papers/{pid}/ask", headers=bearer(user), json={"action": "explain_page", "pages": [99]}).status_code == 422
+    history = client.get(f"/papers/{pid}/asks", headers=bearer(user)).json()["items"]
+    assert [h["action"] for h in history] == ["summarize_pages", "explain_selection"]

@@ -148,6 +148,35 @@ export const usePaperStatusQuery = (id: string | null) =>
     refetchInterval: (query) => ((query.state.data as PaperStatus | undefined)?.status === "processing" || !query.state.data ? 3_000 : false),
   });
 
+/* ── Paper workspace: page outline and extracted text (read-only) ── */
+
+export interface OutlinePage {
+  page_number: number;
+  has_text: boolean;
+  /** Explanation status at the paper's level; null when not requested yet. */
+  explanation: string | null;
+}
+
+export const useOutlineQuery = (id: string | null) =>
+  useQuery({
+    queryKey: ["paper-outline", id],
+    queryFn: () => apiClient<{ paper_id: string; level: string; pages: OutlinePage[] }>(`/papers/${id}/outline`),
+    enabled: !!id,
+    staleTime: 2_000,
+    refetchInterval: (query) => {
+      const pages = (query.state.data as { pages: OutlinePage[] } | undefined)?.pages;
+      return pages?.some((p) => p.explanation === "pending" || p.explanation === "processing") ? 3_000 : false;
+    },
+  });
+
+export const usePageTextQuery = (id: string | null, page: number, enabled: boolean) =>
+  useQuery({
+    queryKey: ["page-text", id, page],
+    queryFn: () => apiClient<{ page_number: number; status: string; text: string }>(`/papers/${id}/pages/${page}/text`),
+    enabled: !!id && enabled,
+    staleTime: Infinity,
+  });
+
 /* ── Study kit (summary, flashcards, questions, highlights, ask) ── */
 
 /** Kit progress; polls only while something is being generated. */
@@ -177,8 +206,12 @@ export const useStudyOutputQuery = <T>(id: string | null, kind: OutputKind, vers
     staleTime: Infinity,
   });
 
+export type AssistantAction = "ask" | "explain_page" | "summarize_pages" | "compare_pages" | "explain_selection";
+
 export interface AskEntry {
   id: string;
+  action?: AssistantAction;
+  pages_requested?: number[];
   question: string;
   answer: string;
   found: boolean;
