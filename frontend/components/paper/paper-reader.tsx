@@ -1,23 +1,24 @@
 "use client";
 
 /**
- * The Paper Study workspace for an uploaded paper: live processing progress,
- * the page list, and each page's explanation as the backend finishes it.
- * Everything shown comes from the existing /papers endpoints.
+ * The Paper Study workspace for an uploaded paper: processing status,
+ * difficulty, the page list, and each page's explanation as the backend's
+ * worker finishes it. Everything shown comes from the /papers endpoints.
  */
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, ArrowRight, FileText, Plus, RotateCcw } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, FileText, Plus, RotateCcw, ScanText } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import { ApiError } from "@/lib/api-error";
-import { usePageExplanationQuery, usePaperPagesQuery, usePaperQuery } from "@/lib/queries";
+import { usePageExplanationQuery, usePaperPagesQuery, usePaperQuery, usePaperStatusQuery } from "@/lib/queries";
 import { readWorkspace, updateWorkspace } from "@/lib/workspace";
 import { Button } from "@/components/ui/button";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { cn } from "@/lib/utils";
 
 const IN_PROGRESS = new Set(["pending", "processing"]);
+const LEVELS = ["Beginner", "Medium", "Pro"] as const;
 
 function StatusDot({ status }: { status: string }) {
   return (
@@ -38,7 +39,9 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
   const queryClient = useQueryClient();
   const paperQuery = usePaperQuery(paperId);
   const pagesQuery = usePaperPagesQuery(paperId);
+  const statusQuery = usePaperStatusQuery(paperId);
   const paper = paperQuery.data;
+  const status = statusQuery.data;
   const pages = useMemo(() => pagesQuery.data?.pages ?? [], [pagesQuery.data]);
 
   // Restore the page this user was on for this paper
@@ -63,31 +66,47 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
   const working = pages.some((p) => IN_PROGRESS.has(p.status));
   const currentStatus = pages.find((p) => p.page_number === current)?.status ?? null;
   const index = pages.findIndex((p) => p.page_number === current);
+  const level = paper?.level ?? null;
 
-  const explanation = usePageExplanationQuery(paperId, current, paper?.level ?? null, currentStatus === "ready");
+  const explanation = usePageExplanationQuery(paperId, current, level, currentStatus);
 
-  const [retrying, setRetrying] = useState(false);
-  const [retryError, setRetryError] = useState<string | null>(null);
-  useEffect(() => setRetryError(null), [current]);
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["paper-pages", paperId] }),
+      queryClient.invalidateQueries({ queryKey: ["paper-status", paperId] }),
+      queryClient.invalidateQueries({ queryKey: ["paper", paperId] }),
+      queryClient.invalidateQueries({ queryKey: ["papers"] }),
+      // A re-explained page must never show its previous cached text
+      queryClient.removeQueries({ queryKey: ["paper-page", paperId] }),
+    ]);
 
-  // Uses the backend's own on-demand generation for one page
-  const explainNow = async (regenerate: boolean) => {
-    if (current == null) return;
-    setRetrying(true);
-    setRetryError(null);
+  const [busy, setBusy] = useState<"page" | "all" | "level" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  useEffect(() => setActionError(null), [current]);
+
+  const run = async (kind: "page" | "all" | "level", action: () => Promise<unknown>) => {
+    setBusy(kind);
+    setActionError(null);
     try {
-      const level = encodeURIComponent(paper?.level || "Medium");
-      const path = regenerate
-        ? `/papers/${paperId}/pages/${current}/regenerate?level=${level}`
-        : `/papers/${paperId}/pages/${current}?level=${level}`;
-      const result = await apiClient<any>(path, regenerate ? { method: "POST" } : {});
-      queryClient.setQueryData(["paper-page", paperId, current, paper?.level ?? null], result);
-      await queryClient.invalidateQueries({ queryKey: ["paper-pages", paperId] });
+      await action();
+      await refresh();
     } catch (err) {
-      setRetryError(err instanceof Error ? err.message : "Couldn't explain this page.");
+      setActionError(err instanceof Error ? err.message : "That didn't work. Please try again.");
     } finally {
-      setRetrying(false);
+      setBusy(null);
     }
+  };
+
+  const retryPage = () =>
+    run("page", () =>
+      apiClient(`/papers/${paperId}/pages/${current}/regenerate?level=${encodeURIComponent(level || "Medium")}`, { method: "POST" })
+    );
+  const retryAllFailed = () => run("all", () => apiClient(`/papers/${paperId}/retry-failed`, { method: "POST" }));
+  const changeLevel = (next: string) => {
+    if (next === level) return;
+    const form = new FormData();
+    form.append("level", next);
+    return run("level", () => apiClient(`/papers/${paperId}`, { method: "PATCH", body: form }));
   };
 
   // The paper is gone, or isn't this user's
@@ -107,12 +126,14 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
 
   const loading = paperQuery.isLoading || (pagesQuery.isLoading && !pagesQuery.data);
   const pct = total ? Math.round(((ready + failed) / total) * 100) : 0;
+  const needsOcr = status?.status === "needs_ocr";
+  const showBanner = !!status && (needsOcr || status.status === "partial" || status.status === "failed");
 
   return (
     <div className="flex h-full flex-col">
       {/* Paper header with live progress */}
       <header className="flex-shrink-0 border-b border-line px-4 py-3.5 sm:px-6">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-surface3 text-ink-soft">
             <FileText size={17} strokeWidth={1.75} />
           </span>
@@ -120,10 +141,28 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
             <div className="truncate text-[14.5px] font-semibold text-ink">{paper?.title || (loading ? "Loading paper…" : "Paper")}</div>
             <div className="mono mt-0.5 text-[12px] text-ink-faint">
               {paper?.page_count ? `${paper.page_count} pages · ` : ""}
-              {paper?.level ? `${paper.level} · ` : ""}
               {total ? `${ready} of ${total} explained${failed ? ` · ${failed} failed` : ""}` : loading ? "" : "No readable text"}
             </div>
           </div>
+          {!needsOcr && total > 0 && (
+            <div role="radiogroup" aria-label="Explanation level" className="inline-flex items-center rounded-[10px] bg-ink/[0.05] p-[3px]">
+              {LEVELS.map((l) => (
+                <button
+                  key={l}
+                  role="radio"
+                  aria-checked={level === l}
+                  disabled={busy !== null}
+                  onClick={() => changeLevel(l)}
+                  className={cn(
+                    "pressable h-7 rounded-[8px] px-2.5 text-[12.5px] font-medium transition-colors disabled:opacity-60",
+                    level === l ? "bg-surface text-ink shadow-sm" : "text-ink-soft hover:text-ink"
+                  )}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          )}
           <Button variant="ghost" size="sm" onClick={onStudyAnother}>
             <Plus size={14} /> <span className="hidden sm:inline">Study another paper</span>
           </Button>
@@ -142,15 +181,38 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
         )}
       </header>
 
+      {showBanner && !needsOcr && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-bad/[0.06] px-4 py-2.5 text-[13px] text-ink sm:px-6">
+          <span className="flex items-center gap-2">
+            <AlertCircle size={15} className="flex-shrink-0 text-bad" /> {status!.message}
+          </span>
+          <Button size="sm" variant="outline" onClick={retryAllFailed} disabled={busy !== null}>
+            {busy === "all" ? <ThinkingMark active size={14} /> : <RotateCcw size={14} />} Retry failed pages
+          </Button>
+        </div>
+      )}
+      {actionError && (
+        <p role="alert" className="border-b border-line bg-bad/[0.06] px-4 py-2 text-[13px] text-bad sm:px-6">{actionError}</p>
+      )}
+
       {loading ? (
         <div className="flex flex-1 items-center justify-center gap-3 text-[13.5px] text-ink-soft" role="status">
           <ThinkingMark active size={20} /> Opening your paper…
         </div>
       ) : total === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5">
-          <p className="max-w-[440px] text-center text-[14.5px] text-ink-soft">
-            CogNexa couldn&rsquo;t find selectable text in this PDF, so there is nothing to explain. Scanned papers need text recognition first.
-          </p>
+          <div className="max-w-[460px] text-center">
+            <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-surface3 text-ink-soft">
+              <ScanText size={20} strokeWidth={1.75} />
+            </span>
+            <h1 className="mt-4 font-display text-title font-semibold text-ink">No selectable text in this PDF</h1>
+            <p className="mt-2 text-[14.5px] leading-relaxed text-ink-soft">
+              {status?.message || "It looks like a scanned document. Run OCR on it, then upload it again."}
+            </p>
+            <Button className="mt-6" variant="outline" onClick={onStudyAnother}>
+              <Plus size={15} /> Upload another PDF
+            </Button>
+          </div>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -177,10 +239,10 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
 
           {/* Current page */}
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <article key={current ?? 0} className="page-enter mx-auto max-w-[720px] px-5 pb-16 pt-8 sm:px-8">
-              <div className="col-label">Page {current}</div>
+            <article key={`${current ?? 0}-${level}`} className="page-enter mx-auto max-w-[720px] px-5 pb-16 pt-8 sm:px-8">
+              <div className="col-label">Page {current} · {level}</div>
 
-              {currentStatus === "ready" && explanation.data ? (
+              {currentStatus === "ready" && explanation.data?.status === "ready" ? (
                 <>
                   <div className="report-prose chat-prose mt-3">
                     <ReactMarkdown>{explanation.data.summary || ""}</ReactMarkdown>
@@ -213,7 +275,7 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
                   )}
                   {explanation.data.figures && Object.keys(explanation.data.figures).length > 0 && (
                     <section className="mt-8">
-                      <h2 className="col-label mb-3">Figures</h2>
+                      <h2 className="col-label mb-3">Figures and equations</h2>
                       <dl className="grid gap-3">
                         {Object.entries(explanation.data.figures).map(([fig, desc]) => (
                           <div key={fig}>
@@ -231,11 +293,12 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
                 </div>
               ) : currentStatus === "failed" ? (
                 <div className="mt-6 rounded-2xl bg-surface p-5 shadow-sm">
-                  <div className="flex items-center gap-2 text-[14px] text-bad">
-                    <AlertCircle size={16} /> This page couldn&rsquo;t be explained.
+                  <div className="flex items-start gap-2 text-[14px] text-bad">
+                    <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                    <span>{(explanation.data?.status === "failed" && explanation.data.error) || "This page couldn't be explained."}</span>
                   </div>
-                  <Button className="mt-4" size="sm" variant="outline" onClick={() => explainNow(true)} disabled={retrying}>
-                    {retrying ? <ThinkingMark active size={14} /> : <RotateCcw size={14} />} Try this page again
+                  <Button className="mt-4" size="sm" variant="outline" onClick={retryPage} disabled={busy !== null}>
+                    {busy === "page" ? <ThinkingMark active size={14} /> : <RotateCcw size={14} />} Retry this page
                   </Button>
                 </div>
               ) : (
@@ -249,14 +312,8 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
                       <div className="mt-0.5 text-[13px] text-ink-soft">It appears here on its own; you can read other pages meanwhile.</div>
                     </div>
                   </div>
-                  {currentStatus === "pending" && (
-                    <Button className="mt-4" size="sm" variant="outline" onClick={() => explainNow(false)} disabled={retrying}>
-                      {retrying ? <ThinkingMark active size={14} /> : null} Explain this page now
-                    </Button>
-                  )}
                 </div>
               )}
-              {retryError && <p role="alert" className="mt-3 text-[13px] text-bad">{retryError}</p>}
 
               <div className="mt-12 flex items-center justify-between gap-3 border-t border-line pt-5">
                 <Button variant="ghost" size="sm" disabled={index <= 0} onClick={() => setCurrent(pages[index - 1].page_number)}>

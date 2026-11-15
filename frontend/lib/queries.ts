@@ -122,13 +122,44 @@ export const usePaperPagesQuery = (id: string | null) =>
     },
   });
 
-/** A finished page explanation. Only requested once the page is ready, so it never triggers generation. */
-export const usePageExplanationQuery = (id: string | null, page: number | null, level: string | null, ready: boolean) =>
+export interface PaperStatus {
+  paper_id: string;
+  status: "processing" | "ready" | "partial" | "failed" | "needs_ocr" | string;
+  level: string;
+  page_count: number | null;
+  text_pages: number;
+  skipped_pages: number;
+  total: number;
+  pending: number;
+  processing: number;
+  ready: number;
+  failed: number;
+  message: string;
+}
+
+/** Paper-level progress; polls while pages are still being explained. */
+export const usePaperStatusQuery = (id: string | null) =>
   useQuery({
-    queryKey: ["paper-page", id, page, level],
+    queryKey: ["paper-status", id],
+    queryFn: () => apiClient<PaperStatus>(`/papers/${id}/status`),
+    enabled: !!id,
+    staleTime: 2_000,
+    refetchInterval: (query) => ((query.state.data as PaperStatus | undefined)?.status === "processing" || !query.state.data ? 3_000 : false),
+  });
+
+/** A settled page (ready or failed). Reading never triggers AI processing. */
+export const usePageExplanationQuery = (id: string | null, page: number | null, level: string | null, settled: string | null) =>
+  useQuery({
+    queryKey: ["paper-page", id, page, level, settled],
     queryFn: () => apiClient<PageExplanation>(`/papers/${id}/pages/${page}?level=${encodeURIComponent(level || "Medium")}`),
-    enabled: !!id && page != null && ready,
+    enabled: !!id && page != null && !!level && (settled === "ready" || settled === "failed"),
     staleTime: Infinity,
+    // Statuses and level can briefly disagree after a level switch: if the record
+    // fetched isn't in the state the page list reports yet, fetch it again
+    refetchInterval: (query) => {
+      const data = query.state.data as PageExplanation | undefined;
+      return data && data.status !== settled ? 2_000 : false;
+    },
   });
 
 export const useSessionDetailQueries = (ids: string[]) =>

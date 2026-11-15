@@ -18,6 +18,7 @@ os.environ["GOOGLE_CLIENT_ID"] = "test-client.apps.googleusercontent.com"
 os.environ["GOOGLE_CLIENT_SECRET"] = "test-client-secret"
 os.environ["OAUTH_REDIRECT_URI"] = "http://localhost:3001/backend/auth/google/callback"
 os.environ["LLM_MOCK"] = "1"
+os.environ["PAPER_WORKER"] = "inline"  # process papers synchronously in tests
 for k in ("RENDER", "APP_ENV", "SMTP_HOST"):
     os.environ.pop(k, None)
 

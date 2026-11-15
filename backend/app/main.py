@@ -47,20 +47,19 @@ async def lifespan(app: FastAPI):
     # Create tables if they don't exist yet (e.g. fresh SQLite DB on new deploy)
     models.Base.metadata.create_all(bind=engine)
 
-    # Reset stale processing pages on startup
-    from app.database import SessionLocal
-    from app.models import PageSummary
-    db = SessionLocal()
+    # Pages left mid-processing by a restart go back to the queue
+    from app.tasks import resume_unfinished
     try:
-        stale = db.query(PageSummary).filter(PageSummary.status == "processing").all()
-        for s in stale:
-            s.status = "pending"
-        db.commit()
+        resume_unfinished()
     except Exception as e:
-        print(f"Error resetting stale pages: {e}")
-    finally:
-        db.close()
+        print(f"Could not resume paper processing: {type(e).__name__}")
     yield
+    # Stop taking new paper work and release anything in flight
+    from app.tasks import shutdown_worker
+    try:
+        shutdown_worker()
+    except Exception as e:
+        print(f"Could not stop paper processing cleanly: {type(e).__name__}")
 
 app = FastAPI(lifespan=lifespan)
 

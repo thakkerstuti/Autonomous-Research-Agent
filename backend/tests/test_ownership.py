@@ -11,6 +11,7 @@ PROTECTED = [
     ("get", "/papers"), ("post", "/papers"), ("get", "/papers/x"), ("patch", "/papers/x"),
     ("get", "/papers/x/file"), ("get", "/papers/x/pages"), ("get", "/papers/x/pages/1"),
     ("post", "/papers/x/pages/1/regenerate"), ("get", "/papers/x/progress"),
+    ("get", "/papers/x/status"), ("post", "/papers/x/retry-failed"),
     ("post", "/research"), ("get", "/research/sessions"), ("get", "/research/sessions/x"),
     ("get", "/research/latest-report"), ("get", "/search?query=test"), ("get", "/auth/me"),
 ]
