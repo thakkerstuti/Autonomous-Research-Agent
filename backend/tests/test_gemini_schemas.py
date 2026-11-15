@@ -10,13 +10,14 @@ from fastapi import HTTPException
 from google.genai import _transformers as sdk_transformers
 from pydantic import ValidationError
 
-from app import llm, models, tasks
+from app import llm, models, study, tasks
 from app.llm import LLMCritiqueResponse
 from app.schemas import ClassificationResult, CritiqueResult, ResearchPlan
 
 GEMINI_SCHEMAS = [
     tasks.BatchAnalysis, tasks.SingleAnalysis, tasks.OverviewModel,  # Paper Study
     ResearchPlan, ClassificationResult, CritiqueResult, LLMCritiqueResponse,  # Research Mode
+    *study.GEMINI_SCHEMAS,  # Study kit: chunk notes, summary, flashcards, questions, highlights, ask
 ]
 
 

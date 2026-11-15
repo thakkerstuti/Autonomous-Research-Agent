@@ -3,6 +3,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { PaperItem, ResearchReport, SessionSummary, UsageMeter } from "./types";
 import { apiClient } from "./api";
+import type { CardState, KitStatus, OutputKind } from "./study-logic";
 
 async function fetchSessions(): Promise<SessionSummary[]> {
   try {
@@ -145,6 +146,54 @@ export const usePaperStatusQuery = (id: string | null) =>
     enabled: !!id,
     staleTime: 2_000,
     refetchInterval: (query) => ((query.state.data as PaperStatus | undefined)?.status === "processing" || !query.state.data ? 3_000 : false),
+  });
+
+/* ── Study kit (summary, flashcards, questions, highlights, ask) ── */
+
+/** Kit progress; polls only while something is being generated. */
+export const useStudyStatusQuery = (id: string | null) =>
+  useQuery({
+    queryKey: ["study-status", id],
+    queryFn: () => apiClient<KitStatus>(`/papers/${id}/study`),
+    enabled: !!id,
+    staleTime: 2_000,
+    refetchInterval: (query) => ((query.state.data as KitStatus | undefined)?.status === "processing" ? 3_000 : false),
+  });
+
+export interface StudyOutput<T> {
+  kind: OutputKind;
+  status: string;
+  error: string | null;
+  content: T | null;
+  progress?: Record<string, CardState>;
+}
+
+/** One generated section, keyed by its version: fetched once, and again only after a regenerate. */
+export const useStudyOutputQuery = <T>(id: string | null, kind: OutputKind, version: string | null, ready: boolean) =>
+  useQuery({
+    queryKey: ["study-output", id, kind, version],
+    queryFn: () => apiClient<StudyOutput<T>>(`/papers/${id}/study/${kind}`),
+    enabled: !!id && ready,
+    staleTime: Infinity,
+  });
+
+export interface AskEntry {
+  id: string;
+  question: string;
+  answer: string;
+  found: boolean;
+  grounded: boolean;
+  citations: { page: number; quote: string; verified: boolean }[];
+  pages_considered: number[];
+  asked_at: string;
+}
+
+export const useAsksQuery = (id: string | null) =>
+  useQuery({
+    queryKey: ["paper-asks", id],
+    queryFn: () => apiClient<{ items: AskEntry[] }>(`/papers/${id}/asks`),
+    enabled: !!id,
+    staleTime: Infinity,
   });
 
 /** A settled page (ready or failed). Reading never triggers AI processing. */

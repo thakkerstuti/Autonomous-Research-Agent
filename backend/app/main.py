@@ -7,6 +7,7 @@ from app.database import engine, get_db
 from app import models
 from app.schemas import ResearchRequest
 from app.papers import router as papers_router
+from app.study_api import router as study_router
 from app.auth.routes import router as auth_router
 from app.auth.deps import get_current_user
 from app.auth import config as auth_config
@@ -64,6 +65,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 app.include_router(papers_router)
+app.include_router(study_router)
 app.include_router(auth_router)
 
 

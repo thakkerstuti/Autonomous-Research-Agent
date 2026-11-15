@@ -18,7 +18,7 @@ export interface PendingResearch {
 }
 
 export interface Workspace {
-  paper?: { id: string; page?: number } | null;
+  paper?: { id: string; page?: number; tab?: string } | null;
   research?: { sessionIds: string[]; pending?: PendingResearch | null } | null;
 }
 

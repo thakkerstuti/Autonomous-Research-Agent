@@ -16,9 +16,22 @@ import { readWorkspace, updateWorkspace } from "@/lib/workspace";
 import { Button } from "@/components/ui/button";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { cn } from "@/lib/utils";
+import { SummaryView } from "@/components/paper/study/summary-view";
+import { FlashcardsView } from "@/components/paper/study/flashcards-view";
+import { QuestionsView } from "@/components/paper/study/questions-view";
+import { HighlightsView } from "@/components/paper/study/highlights-view";
 
 const IN_PROGRESS = new Set(["pending", "processing"]);
 const LEVELS = ["Beginner", "Medium", "Pro"] as const;
+const TABS = [
+  { key: "read", label: "Read" },
+  { key: "summary", label: "Summary" },
+  { key: "flashcards", label: "Flashcards" },
+  { key: "qa", label: "Q&A" },
+  { key: "highlights", label: "Highlights" },
+] as const;
+type Tab = (typeof TABS)[number]["key"];
+const isTab = (v: unknown): v is Tab => TABS.some((t) => t.key === v);
 
 function StatusDot({ status }: { status: string }) {
   return (
@@ -55,10 +68,24 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
     if (current == null || !pages.some((p) => p.page_number === current)) setCurrent(pages[0].page_number);
   }, [pages, current]);
 
+  // The open study section is remembered too, so returning lands in the same place
+  const [tab, setTab] = useState<Tab>(() => {
+    const saved = readWorkspace().paper;
+    return saved?.id === paperId && isTab(saved.tab) ? saved.tab : "read";
+  });
+
   useEffect(() => {
-    if (current == null) return;
-    updateWorkspace((w) => ({ ...w, paper: { id: paperId, page: current } }));
-  }, [paperId, current]);
+    updateWorkspace((w) => ({
+      ...w,
+      paper: { id: paperId, page: current ?? (w.paper?.id === paperId ? w.paper.page : undefined), tab },
+    }));
+  }, [paperId, current, tab]);
+
+  // Page references in the study sections open that page in Read
+  const openPage = (n: number) => {
+    setTab("read");
+    if (pages.some((p) => p.page_number === n)) setCurrent(n);
+  };
 
   const total = pages.length;
   const ready = pages.filter((p) => p.status === "ready").length;
@@ -144,7 +171,7 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
               {total ? `${ready} of ${total} explained${failed ? ` · ${failed} failed` : ""}` : loading ? "" : "No readable text"}
             </div>
           </div>
-          {!needsOcr && total > 0 && (
+          {tab === "read" && !needsOcr && total > 0 && (
             <div role="radiogroup" aria-label="Explanation level" className="inline-flex items-center rounded-[10px] bg-ink/[0.05] p-[3px]">
               {LEVELS.map((l) => (
                 <button
@@ -167,7 +194,27 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
             <Plus size={14} /> <span className="hidden sm:inline">Study another paper</span>
           </Button>
         </div>
-        {total > 0 && working && (
+        {total > 0 && (
+          <div role="tablist" aria-label="Study sections" className="-mx-1 mt-3 flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                role="tab"
+                id={`tab-${t.key}`}
+                aria-selected={tab === t.key}
+                aria-controls="study-panel"
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  "pressable relative h-8 flex-shrink-0 rounded-[9px] px-3 text-[13px] font-medium transition-colors",
+                  tab === t.key ? "bg-surface2 text-ink" : "text-ink-soft hover:text-ink"
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {tab === "read" && total > 0 && working && (
           <div
             className="mt-3 h-1 overflow-hidden rounded-full bg-ink/[0.07]"
             role="progressbar"
@@ -181,6 +228,15 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
         )}
       </header>
 
+      {tab !== "read" && total > 0 ? (
+        <div id="study-panel" role="tabpanel" aria-labelledby={`tab-${tab}`} className="min-h-0 flex-1 overflow-y-auto">
+          {tab === "summary" && <SummaryView paperId={paperId} onOpenPage={openPage} />}
+          {tab === "flashcards" && <FlashcardsView paperId={paperId} onOpenPage={openPage} />}
+          {tab === "qa" && <QuestionsView paperId={paperId} onOpenPage={openPage} />}
+          {tab === "highlights" && <HighlightsView paperId={paperId} onOpenPage={openPage} />}
+        </div>
+      ) : (
+      <>
       {showBanner && !needsOcr && (
         <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-bad/[0.06] px-4 py-2.5 text-[13px] text-ink sm:px-6">
           <span className="flex items-center gap-2">
@@ -329,6 +385,8 @@ export function PaperReader({ paperId, onStudyAnother }: { paperId: string; onSt
             </article>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

@@ -1,0 +1,134 @@
+/**
+ * Pure logic for the Paper Study kit: no React, no imports, so it can be
+ * unit-tested directly with `node --test` (see tests/study-logic.test.mjs).
+ */
+
+export type OutputKind = "summary" | "flashcards" | "questions" | "highlights";
+export const OUTPUT_KINDS: OutputKind[] = ["summary", "flashcards", "questions", "highlights"];
+export type ArtifactStatus = "pending" | "processing" | "ready" | "failed";
+export type KitStatusName = "not_started" | "processing" | "ready" | "partial" | "failed";
+
+export interface KitStatus {
+  paper_id: string;
+  status: KitStatusName;
+  chunks: { total: number; pending: number; processing: number; ready: number; failed: number };
+  outputs: Record<OutputKind, { status: ArtifactStatus; error: string | null; updated_at: string | null } | null>;
+  pages_covered: number;
+  text_pages: number;
+}
+
+export type CardState = "known" | "review";
+export interface Card {
+  id: string;
+  category: string;
+  question: string;
+  answer: string;
+  pages: number[];
+}
+
+/** What a study tab should show for one output. */
+export type OutputView =
+  | { state: "not_started" }
+  | { state: "working"; step: "reading" | "writing"; done: number; total: number }
+  | { state: "failed"; error: string }
+  | { state: "ready"; partial: boolean };
+
+export function outputView(kit: KitStatus | undefined | null, kind: OutputKind): OutputView {
+  const out = kit?.outputs?.[kind];
+  if (!kit || kit.status === "not_started" || !out) return { state: "not_started" };
+  if (out.status === "ready") return { state: "ready", partial: kit.chunks.failed > 0 };
+  if (out.status === "failed") return { state: "failed", error: out.error || "This couldn't be generated. Retry it." };
+  const c = kit.chunks;
+  // Map step first (reading the paper part by part), then the outputs are written
+  if (c.pending + c.processing > 0) return { state: "working", step: "reading", done: c.ready + c.failed, total: c.total };
+  const outs = OUTPUT_KINDS.map((k) => kit.outputs[k]).filter(Boolean) as { status: ArtifactStatus }[];
+  return { state: "working", step: "writing", done: outs.filter((o) => o.status === "ready" || o.status === "failed").length, total: outs.length };
+}
+
+export function isWorking(kit: KitStatus | undefined | null): boolean {
+  return kit?.status === "processing";
+}
+
+/** "p. 3", "pp. 3, 5–7" */
+export function formatPages(pages: number[] | null | undefined): string {
+  const sorted = [...new Set((pages ?? []).filter((p) => Number.isInteger(p) && p > 0))].sort((a, b) => a - b);
+  if (!sorted.length) return "";
+  const parts: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (let i = 1; i <= sorted.length; i++) {
+    const p = sorted[i];
+    if (p === prev + 1) {
+      prev = p;
+      continue;
+    }
+    parts.push(start === prev ? `${start}` : `${start}–${prev}`);
+    start = p;
+    prev = p;
+  }
+  return `${sorted.length === 1 ? "p." : "pp."} ${parts.join(", ")}`;
+}
+
+// ───────── flashcards ─────────
+
+export function deckProgress(cards: Card[], states: Record<string, CardState>) {
+  let known = 0;
+  let review = 0;
+  for (const c of cards) {
+    if (states[c.id] === "known") known++;
+    else if (states[c.id] === "review") review++;
+  }
+  const total = cards.length;
+  return { total, known, review, unseen: total - known - review, pctKnown: total ? Math.round((known / total) * 100) : 0 };
+}
+
+export function visibleCards(cards: Card[], states: Record<string, CardState>, onlyReview: boolean): Card[] {
+  return onlyReview ? cards.filter((c) => states[c.id] === "review") : cards;
+}
+
+export function clampIndex(index: number, length: number): number {
+  if (length <= 0) return 0;
+  return Math.min(Math.max(index, 0), length - 1);
+}
+
+/** Toggle: marking a card with its current state clears it. */
+export function nextCardState(current: CardState | undefined, chosen: CardState): CardState | null {
+  return current === chosen ? null : chosen;
+}
+
+// ───────── grouping ─────────
+
+export const QUESTION_CATEGORIES: { key: string; label: string }[] = [
+  { key: "basic", label: "Basic understanding" },
+  { key: "conceptual", label: "Conceptual" },
+  { key: "technical", label: "Technical" },
+  { key: "methodology", label: "Methodology" },
+  { key: "analytical", label: "Analytical" },
+  { key: "findings", label: "Findings and conclusions" },
+];
+
+export const HIGHLIGHT_CATEGORIES: { key: string; label: string }[] = [
+  { key: "finding", label: "Key findings" },
+  { key: "statistic", label: "Numbers to remember" },
+  { key: "argument", label: "Key arguments" },
+  { key: "contribution", label: "Contributions" },
+  { key: "definition", label: "Definitions" },
+  { key: "formula", label: "Formulas and equations" },
+  { key: "limitation", label: "Limitations" },
+  { key: "conclusion", label: "Conclusions" },
+];
+
+export const CARD_CATEGORY_LABEL: Record<string, string> = {
+  term: "Term",
+  concept: "Concept",
+  formula: "Formula",
+  method: "Method",
+  finding: "Finding",
+  distinction: "Distinction",
+};
+
+export function groupByCategory<T extends { category: string }>(items: T[], order: { key: string; label: string }[]) {
+  return order
+    .map(({ key, label }) => ({ key, label, items: items.filter((i) => i.category === key) }))
+    .filter((g) => g.items.length > 0);
+}

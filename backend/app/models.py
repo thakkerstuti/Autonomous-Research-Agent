@@ -112,3 +112,25 @@ class AuthToken(Base):
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+# ───────────────────────── Paper Study kit ─────────────────────────
+# New table only (created by create_all at startup, like the auth tables).
+
+class StudyArtifact(Base):
+    """One generated study output for a paper, stored as JSON.
+
+    kind is "chunk:<n>" for the per-chunk notes of the map step, or one of
+    "summary", "flashcards", "questions", "highlights" for paper-level
+    outputs, plus "flashcard_progress" and "asks" for the reader's own state.
+    """
+    __tablename__ = "study_artifacts"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    paper_id = Column(String, ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False)
+    kind = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="pending")  # pending, processing, ready, failed
+    content = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("paper_id", "kind", name="uix_study_paper_kind"),)

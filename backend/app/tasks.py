@@ -183,6 +183,7 @@ PAGES TO ANALYZE:
         prompt += f"\n--- PAGE {num} ---\n{text[:PAGE_CHAR_LIMIT] if text else '[No text on this page]'}\n"
     prompt += """
 For EACH page number listed, return: a summary explaining the page at the requested level, 2 to 5 key points, the technical terms defined or used on the page (each with a name and a short explanation), and any figures, equations or tables (each with a name and a one-line explanation).
+Teach, don't just restate: say what the page is doing in the paper's argument and why it matters. At Beginner and Medium levels, add a short example or analogy when it genuinely helps. Every statement must still come from the page text.
 If a page is blank, a reference list, or has no meaningful text, say so honestly in the summary instead of inventing content.
 """
     return prompt
@@ -341,16 +342,60 @@ def enqueue_paper(paper_id: str, level: str) -> None:
     _queue.put(key)
 
 
+_study_queue: "queue.Queue[str]" = queue.Queue()
+_study_queued: set[str] = set()
+_study_worker: threading.Thread | None = None
+
+
+def _run_study_worker() -> None:
+    from app.study import generate_study_kit_job
+    while not _stopping.is_set():
+        try:
+            paper_id = _study_queue.get(timeout=1)
+        except queue.Empty:
+            continue
+        with _lock:
+            _study_queued.discard(paper_id)
+        try:
+            generate_study_kit_job(paper_id)
+        except Exception as exc:  # the worker must never die
+            log.error("study worker error %s", type(exc).__name__)
+        finally:
+            _study_queue.task_done()
+
+
+def enqueue_study(paper_id: str) -> None:
+    """Queue a paper's study kit. Separate from page explanations so neither waits on the other."""
+    global _study_worker
+    if os.getenv("PAPER_WORKER") == "inline":  # tests: run synchronously
+        from app.study import generate_study_kit_job
+        generate_study_kit_job(paper_id)
+        return
+    with _lock:
+        if paper_id in _study_queued:
+            return
+        _study_queued.add(paper_id)
+        if _study_worker is None or not _study_worker.is_alive():
+            _study_worker = threading.Thread(target=_run_study_worker, name="study-worker", daemon=True)
+            _study_worker.start()
+    _study_queue.put(paper_id)
+
+
 def shutdown_worker(wait_seconds: float = 5.0) -> None:
     """Graceful stop: the worker finishes the page batch it's on and takes no
     more; anything still marked processing goes back to pending, so nothing is
     left stuck and the next start resumes it."""
+    from app.models import StudyArtifact
     _stopping.set()
-    if _worker is not None and _worker.is_alive():
-        _worker.join(timeout=wait_seconds)
+    for worker in (_worker, _study_worker):
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=wait_seconds)
     db: Session = SessionLocal()
     try:
         released = db.query(PageSummary).filter(PageSummary.status == "processing").update(
+            {"status": "pending"}, synchronize_session=False
+        )
+        released += db.query(StudyArtifact).filter(StudyArtifact.status == "processing").update(
             {"status": "pending"}, synchronize_session=False
         )
         db.commit()
@@ -378,6 +423,17 @@ def resume_unfinished() -> int:
             enqueue_paper(pid, lvl)
         if keys:
             log.info("resumed %d unfinished paper job(s)", len(keys))
+
+        from app.models import StudyArtifact
+        db.query(StudyArtifact).filter(StudyArtifact.status == "processing").update(
+            {"status": "pending"}, synchronize_session=False
+        )
+        db.commit()
+        study_ids = sorted({pid for (pid,) in db.query(StudyArtifact.paper_id).filter(StudyArtifact.status == "pending").distinct()})
+        for pid in study_ids:
+            enqueue_study(pid)
+        if study_ids:
+            log.info("resumed %d unfinished study kit(s)", len(study_ids))
         return len(keys)
     finally:
         db.close()
