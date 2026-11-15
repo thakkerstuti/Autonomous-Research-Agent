@@ -7,6 +7,9 @@ from app.database import engine, get_db
 from app import models
 from app.schemas import ResearchRequest
 from app.papers import router as papers_router
+from app.auth.routes import router as auth_router
+from app.auth.deps import get_current_user
+from app.auth import config as auth_config
 from urllib.parse import urlparse
 import urllib.parse
 import re
@@ -62,18 +65,26 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 app.include_router(papers_router)
+app.include_router(auth_router)
 
-import os
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+@app.middleware("http")
+async def no_store_auth_responses(request, call_next):
+    # Auth responses carry tokens and cookies: never cache them (CDN or browser)
+    response = await call_next(request)
+    if request.url.path.startswith("/auth/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
+# Exact frontend origins only (ALLOWED_ORIGINS). API calls authenticate with
+# a bearer token, not cookies, so credentialed CORS is not needed; the auth
+# cookie endpoints are reached same-origin through the frontend's rewrite.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=auth_config.ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-CogNexa-Auth"],
 )
 
 
@@ -88,8 +99,16 @@ def health():
 
 
 @app.post("/research")
-def research(request: ResearchRequest, db: Session = Depends(get_db)):
+def research(request: ResearchRequest, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     question = request.question.strip()
+
+    if request.session_id:
+        owned = db.query(models.ResearchSession).filter(
+            models.ResearchSession.id == request.session_id,
+            models.ResearchSession.user_id == user.id,
+        ).first()
+        if not owned:
+            raise HTTPException(status_code=404, detail="Research session not found")
 
     if len(question) < 10:
         raise HTTPException(
@@ -104,6 +123,7 @@ def research(request: ResearchRequest, db: Session = Depends(get_db)):
             output_format=request.output_format,
             session_id=request.session_id,
             db=db,
+            user_id=user.id,
         )
     except HTTPException:
         raise
@@ -113,9 +133,10 @@ def research(request: ResearchRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/research/sessions")
-def get_research_sessions(db: Session = Depends(get_db)):
+def get_research_sessions(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     sessions = (
         db.query(models.ResearchSession)
+        .filter(models.ResearchSession.user_id == user.id)
         .order_by(models.ResearchSession.updated_at.desc())
         .all()
     )
@@ -134,8 +155,11 @@ def get_research_sessions(db: Session = Depends(get_db)):
 
 
 @app.get("/research/sessions/{session_id}")
-def get_research_session(session_id: str, db: Session = Depends(get_db)):
-    s = db.query(models.ResearchSession).filter(models.ResearchSession.id == session_id).first()
+def get_research_session(session_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    s = db.query(models.ResearchSession).filter(
+        models.ResearchSession.id == session_id,
+        models.ResearchSession.user_id == user.id,
+    ).first()
     if not s:
         raise HTTPException(status_code=404, detail="Research session not found")
     return {
@@ -153,10 +177,11 @@ def get_research_session(session_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/research/latest-report")
-def get_latest_report(db: Session = Depends(get_db)):
+def get_latest_report(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     # Prefer most recent session with real evidence and report
     s = (
         db.query(models.ResearchSession)
+        .filter(models.ResearchSession.user_id == user.id)
         .filter(models.ResearchSession.report.isnot(None))
         .filter(models.ResearchSession.evidence_log.isnot(None))
         .filter(models.ResearchSession.evidence_log != "[]")
@@ -166,6 +191,7 @@ def get_latest_report(db: Session = Depends(get_db)):
     if not s:
         s = (
             db.query(models.ResearchSession)
+            .filter(models.ResearchSession.user_id == user.id)
             .filter(models.ResearchSession.report.isnot(None))
             .order_by(models.ResearchSession.updated_at.desc())
             .first()
@@ -239,5 +265,5 @@ def get_latest_report(db: Session = Depends(get_db)):
 
 
 @app.get("/search")
-def search(query: str):
+def search(query: str, user: models.User = Depends(get_current_user)):
     return search_web(query)

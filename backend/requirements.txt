@@ -8,3 +8,8 @@ sqlalchemy
 alembic
 pymupdf
 python-multipart
+argon2-cffi>=23.1.0
+pyjwt[crypto]>=2.9.0
+authlib>=1.3.0
+httpx>=0.27.0
+email-validator>=2.1.0

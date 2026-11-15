@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 import app.models as models
+from app.auth.deps import get_current_user
 import fitz # PyMuPDF
 import json
 
@@ -12,9 +13,18 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 router = APIRouter(prefix="/papers", tags=["papers"])
 
+
+def _owned_paper(db: Session, paper_id: str, user: models.User) -> models.Paper:
+    """A paper that isn't the caller's is reported as missing, not forbidden."""
+    paper = db.query(models.Paper).filter(models.Paper.id == paper_id, models.Paper.user_id == user.id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    return paper
+
+
 @router.get("")
-def list_papers(db: Session = Depends(get_db)):
-    papers = db.query(models.Paper).order_by(models.Paper.created_at.desc()).all()
+def list_papers(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    papers = db.query(models.Paper).filter(models.Paper.user_id == user.id).order_by(models.Paper.created_at.desc()).all()
     results = []
     for p in papers:
         results.append({
@@ -33,7 +43,8 @@ def upload_paper(
     background_tasks: BackgroundTasks,
     level: str = Form("Medium"),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db) 
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
 ):
     file_bytes = file.file.read()
     
@@ -52,6 +63,7 @@ def upload_paper(
     page_count = len(doc)
 
     new_paper = models.Paper(
+        user_id=user.id,
         title=file.filename,
         page_count=page_count,
         file_size=len(file_bytes),
@@ -97,24 +109,21 @@ def upload_paper(
     return {"id": new_paper.id, "message": "Queued for processing."}
 
 @router.get("/{paper_id}/file")
-def get_paper_file(paper_id: str):
+def get_paper_file(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    paper_id = _owned_paper(db, paper_id, user).id
     file_path = os.path.join(UPLOAD_DIR, f"{paper_id}.pdf")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path, media_type="application/pdf")
 
 @router.get("/{paper_id}")
-def get_paper(paper_id: str, db: Session = Depends(get_db)):
-    paper = db.query(models.Paper).filter(models.Paper.id == paper_id).first()
-    if not paper:
-        raise HTTPException(status_code=404, detail="Paper not found")
+def get_paper(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    paper = _owned_paper(db, paper_id, user)
     return paper
 
 @router.patch("/{paper_id}")
-def update_paper(paper_id: str, level: str = Form(...), db: Session = Depends(get_db), background_tasks=BackgroundTasks()):
-    paper = db.query(models.Paper).filter(models.Paper.id == paper_id).first()
-    if not paper:
-        raise HTTPException(status_code=404, detail="Paper not found")
+def update_paper(paper_id: str, level: str = Form(...), db: Session = Depends(get_db), user: models.User = Depends(get_current_user), background_tasks=BackgroundTasks()):
+    paper = _owned_paper(db, paper_id, user)
         
     paper.level = level
     
@@ -147,10 +156,8 @@ def update_paper(paper_id: str, level: str = Form(...), db: Session = Depends(ge
     return {"id": paper.id, "level": level, "status": "processing" if new_summaries > 0 else "ready"}
 
 @router.get("/{paper_id}/pages")
-def get_paper_pages(paper_id: str, db: Session = Depends(get_db)):
-    paper = db.query(models.Paper).filter(models.Paper.id == paper_id).first()
-    if not paper:
-        raise HTTPException(status_code=404, detail="Paper not found")
+def get_paper_pages(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    paper = _owned_paper(db, paper_id, user)
         
     summaries = db.query(models.PageSummary).filter(
         models.PageSummary.paper_id == paper_id,
@@ -160,10 +167,8 @@ def get_paper_pages(paper_id: str, db: Session = Depends(get_db)):
     return {"pages": [{"page_number": s.page_number, "status": s.status} for s in summaries]}
 
 @router.get("/{paper_id}/pages/{page_number}")
-def get_paper_page(paper_id: str, page_number: int, level: str = "Medium", db: Session = Depends(get_db)):
-    paper = db.query(models.Paper).filter(models.Paper.id == paper_id).first()
-    if not paper:
-        raise HTTPException(status_code=404, detail="Paper not found")
+def get_paper_page(paper_id: str, page_number: int, level: str = "Medium", db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    paper = _owned_paper(db, paper_id, user)
         
     summary = db.query(models.PageSummary).filter(
         models.PageSummary.paper_id == paper_id,
@@ -182,10 +187,8 @@ def get_paper_page(paper_id: str, page_number: int, level: str = "Medium", db: S
     return summary
 
 @router.post("/{paper_id}/pages/{page_number}/regenerate")
-def regenerate_paper_page(paper_id: str, page_number: int, level: str = "Medium", db: Session = Depends(get_db)):
-    paper = db.query(models.Paper).filter(models.Paper.id == paper_id).first()
-    if not paper:
-        raise HTTPException(status_code=404, detail="Paper not found")
+def regenerate_paper_page(paper_id: str, page_number: int, level: str = "Medium", db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    paper = _owned_paper(db, paper_id, user)
         
     summary = db.query(models.PageSummary).filter(
         models.PageSummary.paper_id == paper_id,
@@ -205,10 +208,8 @@ import asyncio
 from fastapi.responses import StreamingResponse
 
 @router.get("/{paper_id}/progress")
-async def get_paper_progress(paper_id: str, db: Session = Depends(get_db)):
-    paper = db.query(models.Paper).filter(models.Paper.id == paper_id).first()
-    if not paper:
-        raise HTTPException(status_code=404, detail="Paper not found")
+async def get_paper_progress(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    paper = _owned_paper(db, paper_id, user)
         
     level = paper.level
 

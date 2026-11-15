@@ -1,14 +1,7 @@
-export class ApiError extends Error {
-  status: number;
-  data: any;
+import { ApiError, errorFromResponse } from "./api-error";
+import { getAccessToken, recoverFromUnauthorized } from "./auth";
 
-  constructor(status: number, message: string, data?: any) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.data = data;
-  }
-}
+export { ApiError };
 
 // In local development, requests go through the dev server's /backend relay
 // (see next.config.mjs) so the deployed backend's CORS rules don't block localhost.
@@ -24,28 +17,25 @@ export async function apiClient<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
-  
-  const headers = new Headers(options.headers || {});
-  if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
-  }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
-
-  if (!response.ok) {
-    let errorDetail = "An unexpected error occurred";
-    let data;
-    try {
-      data = await response.json();
-      errorDetail = data.detail || errorDetail;
-    } catch {
-      // response might not be JSON
+  const send = (token: string | null) => {
+    const headers = new Headers(options.headers || {});
+    if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
+      headers.set("Content-Type", "application/json");
     }
-    throw new ApiError(response.status, errorDetail, data);
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    return fetch(url, { ...options, headers });
+  };
+
+  let response = await send(await getAccessToken());
+
+  // The access token expired or was revoked: renew it once and retry
+  if (response.status === 401) {
+    const renewed = await recoverFromUnauthorized();
+    if (renewed) response = await send(renewed);
   }
+
+  if (!response.ok) throw await errorFromResponse(response);
 
   // Handle empty responses
   if (response.status === 204) {

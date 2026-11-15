@@ -168,6 +168,7 @@ def run_research(
     output_format: str = "full",
     session_id: str | None = None,
     db=None,
+    user_id: str | None = None,
 ) -> dict:
     start_time = time.time()
     gemini_calls = 0
@@ -392,11 +393,15 @@ def run_research(
 
         sess = None
         if session_id:
-            sess = db.query(ResearchSession).filter(ResearchSession.id == session_id).first()
+            sess = db.query(ResearchSession).filter(
+                ResearchSession.id == session_id,
+                ResearchSession.user_id == user_id,
+            ).first()
 
         if not sess:
             sess = ResearchSession(
                 id=session_id or None,
+                user_id=user_id,
                 question=question,
                 title=question,
                 output_format=output_format,

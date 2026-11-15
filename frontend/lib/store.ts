@@ -3,14 +3,7 @@ import { ChatMessage, ModelPreference, Mode, User } from "./types";
 
 export type Theme = "light" | "dark";
 
-const MOCK_DEFAULT_USER: User = {
-  id: "usr_1",
-  name: "Dr. Alex Morgan",
-  email: "alex.morgan@cognexa.ai",
-  role: "Lead Researcher",
-  institution: "Stanford AI Lab",
-  avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
-};
+export type AuthStatus = "loading" | "authenticated" | "anonymous";
 
 interface UiState {
   sidebarOpen: boolean;
@@ -24,11 +17,12 @@ interface UiState {
   initTheme: () => void;
   toggleTheme: () => void;
   setTheme: (t: Theme) => void;
-  // User Authentication
+  // Authentication: set only from verified server responses (see lib/auth.ts)
   user: User | null;
   isAuthenticated: boolean;
-  login: (userData: Partial<User>) => void;
-  logout: () => void;
+  authStatus: AuthStatus;
+  setAuthUser: (user: User | null) => void;
+  setAuthStatus: (status: AuthStatus) => void;
   // per-mode chat history
   chatHistories: Record<Mode, ChatMessage[]>;
   appendMessage: (mode: Mode, message: ChatMessage) => void;
@@ -79,23 +73,12 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ theme: next });
   },
 
-  // Auth state
-  user: MOCK_DEFAULT_USER,
-  isAuthenticated: true,
-  login: (userData) => {
-    const newUser: User = {
-      id: `usr_${Date.now()}`,
-      name: userData.name || "Researcher User",
-      email: userData.email || "user@cognexa.ai",
-      role: userData.role || "Academic Researcher",
-      institution: userData.institution || "Research Institution",
-      avatar:
-        userData.avatar ||
-        `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(userData.name || "User")}`,
-    };
-    set({ user: newUser, isAuthenticated: true });
-  },
-  logout: () => set({ user: null, isAuthenticated: false }),
+  // Auth state: unknown until the session check in AppShell finishes
+  user: null,
+  isAuthenticated: false,
+  authStatus: "loading",
+  setAuthUser: (user) => set({ user, isAuthenticated: !!user, authStatus: user ? "authenticated" : "anonymous" }),
+  setAuthStatus: (authStatus) => set({ authStatus }),
 
   chatHistories: { research: [], paper: [] },
   appendMessage: (mode, message) =>

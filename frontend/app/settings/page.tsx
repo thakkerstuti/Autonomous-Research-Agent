@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUiStore } from "@/lib/store";
 import { useUsageQuery } from "@/lib/queries";
@@ -9,8 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { LogOut, Check } from "lucide-react";
+import { LogOut, Check, Loader2, AlertCircle, CheckCircle2, KeyRound, MonitorSmartphone } from "lucide-react";
+import { connectGoogle, signOut, signOutEverywhere, updateProfile } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { GoogleIcon } from "@/components/auth/google-icon";
 
 const models: { value: ModelPreference; title: string; body: string }[] = [
   { value: "fast", title: "Fast", body: "Quicker answers, lighter checking. Good for quick lookups." },
@@ -29,24 +31,59 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { modelPreference, setModelPreference, user, login, logout } = useUiStore();
+  const { modelPreference, setModelPreference, user } = useUiStore();
   const { data: usage, isLoading } = useUsageQuery();
 
   const [name, setName] = useState(user?.name || "");
-  const [email, setEmail] = useState(user?.email || "");
-  const [role, setRole] = useState(user?.role || "");
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"google" | "all" | "out" | null>(null);
 
-  const handleSave = (e: React.FormEvent) => {
+  const googleLinked = user?.providers?.includes("google") ?? false;
+
+  // Result of returning from Google's consent screen
+  useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get("google");
+    if (result === "linked") setNotice("Google is now connected. You can sign in with either method.");
+    if (result === "in_use") setError("That Google account is already connected to a different CogNexa account.");
+    if (result) window.history.replaceState(null, "", "/settings");
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    login({ name, email, role });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2200);
+    setError(null);
+    setSaving(true);
+    try {
+      await updateProfile(name);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2200);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save your name.");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleLogout = () => {
-    logout();
-    router.push("/login");
+  const handleConnectGoogle = async () => {
+    setError(null);
+    setBusy("google");
+    try {
+      await connectGoogle();
+    } catch (err) {
+      setBusy(null);
+      setError(err instanceof Error ? err.message : "Couldn't start connecting Google.");
+    }
+  };
+
+  const handleLogout = async (everywhere: boolean) => {
+    setBusy(everywhere ? "all" : "out");
+    try {
+      await (everywhere ? signOutEverywhere() : signOut());
+    } finally {
+      router.replace("/login");
+    }
   };
 
   return (
@@ -62,22 +99,29 @@ export default function SettingsPage() {
           </TabsList>
 
           <TabsContent value="account">
+            {(error || notice) && (
+              <div
+                role={error ? "alert" : "status"}
+                className={cn(
+                  "mb-4 flex items-center gap-2 rounded-xl px-3.5 py-3 text-[13px]",
+                  error ? "bg-bad/10 text-bad" : "bg-ok/10 text-ok"
+                )}
+              >
+                {error ? <AlertCircle size={15} className="flex-shrink-0" /> : <CheckCircle2 size={15} className="flex-shrink-0" />}
+                <span>{error || notice}</span>
+              </div>
+            )}
+
             <form onSubmit={handleSave} className="rounded-2xl bg-surface shadow-sm">
               <div className="grid gap-5 p-6">
                 <Field label="Full name">
-                  <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+                  <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" maxLength={120} required />
                 </Field>
                 <Field label="Email">
-                  <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
-                </Field>
-                <Field label="Role or field">
-                  <Input value={role} onChange={(e) => setRole(e.target.value)} />
+                  <Input type="email" value={user?.email || ""} readOnly disabled autoComplete="email" />
                 </Field>
               </div>
-              <div className="flex items-center justify-between gap-3 border-t border-line px-6 py-4">
-                <Button type="button" variant="danger" size="sm" onClick={handleLogout}>
-                  <LogOut size={14} /> Sign out
-                </Button>
+              <div className="flex items-center justify-end gap-3 border-t border-line px-6 py-4">
                 <div className="flex items-center gap-3">
                   <span
                     aria-live="polite"
@@ -88,10 +132,49 @@ export default function SettingsPage() {
                   >
                     <Check size={14} /> Saved
                   </span>
-                  <Button size="sm" type="submit">Save changes</Button>
+                  <Button size="sm" type="submit" disabled={saving}>
+                    {saving && <Loader2 size={14} className="animate-spin" />} Save changes
+                  </Button>
                 </div>
               </div>
             </form>
+
+            <div className="mt-6 rounded-2xl bg-surface shadow-sm">
+              <div className="border-b border-line px-6 py-4">
+                <h2 className="text-[14px] font-semibold text-ink">Sign-in methods</h2>
+              </div>
+              <div className="flex items-center justify-between gap-4 px-6 py-4">
+                <span className="flex items-center gap-3 text-[13.5px] text-ink">
+                  <KeyRound size={16} className="text-ink-faint" /> Email and password
+                </span>
+                <span className="text-right text-[12.5px] text-ink-soft">
+                  {user?.hasPassword ? "Set" : "Not set. Use “Forgot password” on the sign-in page to add one."}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4 border-t border-line px-6 py-4">
+                <span className="flex items-center gap-3 text-[13.5px] text-ink">
+                  <GoogleIcon /> Google
+                </span>
+                {googleLinked ? (
+                  <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-ok">
+                    <Check size={14} /> Connected
+                  </span>
+                ) : (
+                  <Button type="button" size="sm" variant="outline" onClick={handleConnectGoogle} disabled={busy !== null}>
+                    {busy === "google" && <Loader2 size={14} className="animate-spin" />} Connect Google
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-surface px-6 py-4 shadow-sm">
+              <Button type="button" variant="danger" size="sm" onClick={() => handleLogout(false)} disabled={busy !== null}>
+                {busy === "out" ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />} Sign out
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => handleLogout(true)} disabled={busy !== null}>
+                {busy === "all" ? <Loader2 size={14} className="animate-spin" /> : <MonitorSmartphone size={14} />} Sign out of all devices
+              </Button>
+            </div>
           </TabsContent>
 
           <TabsContent value="models">

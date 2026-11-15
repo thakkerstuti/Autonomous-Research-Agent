@@ -8,6 +8,7 @@ import {
   LogIn, Sun, Moon, LogOut, PanelLeftClose, PanelLeftOpen, Plus, ChevronsUpDown,
 } from "lucide-react";
 import { useUiStore } from "@/lib/store";
+import { signOut } from "@/lib/auth";
 import { useSessionsQuery } from "@/lib/queries";
 import { modeHref } from "@/lib/nav";
 import { toggleThemeWithReveal } from "@/lib/theme-transition";
@@ -41,7 +42,7 @@ function Tip({ show, children }: { show: boolean; children: React.ReactNode }) {
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, isAuthenticated, logout, theme, toggleTheme } = useUiStore();
+  const { user, isAuthenticated, theme, toggleTheme } = useUiStore();
   const { data: sessions } = useSessionsQuery();
   const [collapsed, setCollapsed] = useState(false);
   const [ready, setReady] = useState(false);
@@ -74,9 +75,12 @@ export function Sidebar() {
 
   const recent = (sessions ?? []).slice(0, 5);
 
-  const handleLogout = () => {
-    logout();
-    router.push("/login");
+  const handleLogout = async () => {
+    try {
+      await signOut();
+    } finally {
+      router.replace("/login");
+    }
   };
 
   return (

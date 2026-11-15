@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, UniqueConstraint
+from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, UniqueConstraint, Boolean, ForeignKey
 from app.database import Base
 import uuid
 
@@ -60,3 +60,55 @@ class ResearchSession(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+
+
+# ───────────────────────── Authentication ─────────────────────────
+# New tables only; created by Base.metadata.create_all at startup.
+# Ownership of papers and research sessions uses their existing user_id column.
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    email = Column(String(320), unique=True, index=True, nullable=False)  # stored lowercased
+    email_verified = Column(Boolean, default=False, nullable=False)
+    password_hash = Column(String, nullable=True)  # null for Google-only accounts
+    name = Column(String(120), nullable=True)
+    avatar_url = Column(String(1024), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+
+
+class OAuthAccount(Base):
+    __tablename__ = "oauth_accounts"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    provider = Column(String(32), nullable=False)
+    provider_subject = Column(String(255), nullable=False)  # Google's stable "sub"
+    email = Column(String(320), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("provider", "provider_subject", name="uix_oauth_provider_subject"),)
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    family_id = Column(String, index=True, nullable=False)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)  # sha256 hex; raw token never stored
+    expires_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_reason = Column(String(32), nullable=True)  # rotated, logout, logout_all, reuse_detected, password_reset
+    user_agent = Column(String(512), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class AuthToken(Base):
+    """Single-use tokens sent by email (password reset)."""
+    __tablename__ = "auth_tokens"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    purpose = Column(String(32), nullable=False)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)

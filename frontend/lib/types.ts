@@ -22,6 +22,8 @@ export interface User {
   avatar?: string;
   role?: string;
   institution?: string;
+  hasPassword?: boolean;
+  providers?: string[];
 }
 
 export interface EvidenceSource {
