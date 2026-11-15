@@ -25,103 +25,124 @@ function importantPages(c: SummaryContent): number[] {
   return [...count.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 8).map(([p]) => p).sort((a, b) => a - b);
 }
 
+/** While the overview is written: the same two columns, drawn as quiet lines. */
+function OverviewPlaceholder({ still }: { still: boolean }) {
+  return (
+    <div className="split-aside" aria-hidden>
+      <div>
+        <TextSkeleton lines={4} still={still} />
+        <div className="mt-12 h-3 w-40 rounded-full bg-ink/[0.06]" />
+        <TextSkeleton lines={5} still={still} />
+      </div>
+      <div className="split-side"><TextSkeleton lines={6} still={still} /></div>
+    </div>
+  );
+}
+
 function OverviewBody({ paperId, version, onOpenPage }: { paperId: string; version: string | null; onOpenPage: (p: number) => void }) {
   const q = useStudyOutputQuery<SummaryContent>(paperId, "summary", version, true);
   const c = q.data?.content;
-  if (!c) return <TextSkeleton />;
+  if (!c) return <OverviewPlaceholder still={false} />;
   const covered = c.sections.filter((s) => s.specified);
   const missing = c.sections.filter((s) => !s.specified);
   const pages = importantPages(c);
+  const hasAside = !!(c.key_numbers?.length || c.key_concepts?.length || pages.length);
 
   return (
-    <div className="animate-view-in">
-      <p className="mt-7 font-serif text-[19px] leading-[1.7] text-ink">{c.overview}</p>
-
-      {!!c.key_findings?.length && (
-        <section className="mt-10" aria-labelledby="ov-findings">
-          <h2 id="ov-findings" className="col-label">Main findings</h2>
-          <ol className="mt-3 divide-y divide-line border-y border-line">
-            {c.key_findings.map((f, i) => (
-              <li key={i} className="flex gap-4 py-3">
-                <span className="mono w-5 flex-shrink-0 pt-0.5 text-[12px] text-ink-faint">{i + 1}</span>
-                <span className="flex-1 text-[15px] leading-relaxed text-ink">{f.text}</span>
-                <PageRefs pages={f.pages} onOpenPage={onOpenPage} className="flex-shrink-0 self-start" />
-              </li>
-            ))}
-          </ol>
+    <div className={hasAside ? "split-aside" : ""}>
+      <div className="min-w-0">
+        <section aria-labelledby="ov-summary">
+          <h2 id="ov-summary" className="sr-only">Summary</h2>
+          <p className="t-lead max-w-[64ch]">{c.overview}</p>
         </section>
-      )}
 
-      <div className="mt-10 grid gap-10 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-        {!!c.key_concepts?.length && (
-          <section aria-labelledby="ov-concepts">
-            <h2 id="ov-concepts" className="col-label">Important concepts</h2>
-            <dl className="mt-3 grid gap-4">
-              {c.key_concepts.map((k) => (
-                <div key={k.name}>
-                  <dt className="flex items-baseline justify-between gap-3 text-[14.5px] font-semibold text-ink">
-                    {k.name}
-                    <PageRefs pages={k.pages} onOpenPage={onOpenPage} />
-                  </dt>
-                  <dd className="mt-0.5 text-[14px] leading-relaxed text-ink-soft">{k.definition}</dd>
-                </div>
+        {!!c.key_findings?.length && (
+          <section className="mt-14" aria-labelledby="ov-findings">
+            <h2 id="ov-findings" className="t-heading">Main findings</h2>
+            <ol className="mt-4 border-t border-line">
+              {c.key_findings.map((f, i) => (
+                <li key={i} className="grid grid-cols-[28px_minmax(0,1fr)] gap-x-3 border-b border-line py-4 sm:grid-cols-[32px_minmax(0,1fr)_auto]">
+                  <span className="font-display text-[17px] italic leading-[1.5] text-accent">{i + 1}</span>
+                  <span className="t-body max-w-[66ch]">{f.text}</span>
+                  <PageRefs pages={f.pages} onOpenPage={onOpenPage} className="col-start-2 mt-1 sm:col-start-3 sm:mt-0 sm:self-start sm:pt-0.5" />
+                </li>
               ))}
-            </dl>
+            </ol>
           </section>
         )}
-        <div className="grid content-start gap-10">
+
+        <section className="mt-14" aria-labelledby="ov-full">
+          <h2 id="ov-full" className="t-heading">The paper, section by section</h2>
+          <div className="mt-4 border-t border-line">
+            {covered.map((s) => (
+              <details key={s.key} className="group border-b border-line">
+                <summary className="flex cursor-pointer list-none items-center gap-3 py-4 marker:hidden">
+                  <ChevronRight size={15} className="flex-shrink-0 text-ink-faint transition-transform duration-200 group-open:rotate-90" />
+                  <span className="flex-1 text-[15px] font-medium text-ink transition-colors group-hover:text-accent">{s.title}</span>
+                  <PageRefs pages={s.pages} onOpenPage={onOpenPage} />
+                </summary>
+                <div className="report-prose pb-6 pl-7 !text-[17px]">
+                  <ReactMarkdown>{s.body}</ReactMarkdown>
+                </div>
+              </details>
+            ))}
+          </div>
+          {missing.length > 0 && (
+            <p className="t-body-sm mt-4 max-w-[66ch] text-ink-faint">
+              Not specified in the paper: {missing.map((s) => s.title.toLowerCase()).join(", ")}.
+            </p>
+          )}
+        </section>
+      </div>
+
+      {hasAside && (
+        <aside className="split-side min-w-0" aria-label="At a glance">
           {!!c.key_numbers?.length && (
             <section aria-labelledby="ov-numbers">
-              <h2 id="ov-numbers" className="col-label">Key numbers</h2>
-              <ul className="mt-3 grid gap-2.5">
+              <h2 id="ov-numbers" className="t-heading-sm">Key numbers</h2>
+              <ul className="mt-3">
                 {c.key_numbers.map((n, i) => (
-                  <li key={i} className="flex items-baseline justify-between gap-3 border-l-2 border-accent/50 pl-3 text-[14px] leading-relaxed text-ink">
-                    <span>{n.text}</span>
-                    <PageRefs pages={n.pages} onOpenPage={onOpenPage} className="flex-shrink-0" />
+                  <li key={i} className="border-t border-line py-3">
+                    <p className="text-[14.5px] font-medium leading-[1.55] text-ink">{n.text}</p>
+                    <PageRefs pages={n.pages} onOpenPage={onOpenPage} className="-ml-1 mt-1" />
                   </li>
                 ))}
               </ul>
             </section>
           )}
-          {pages.length > 0 && (
-            <section aria-labelledby="ov-pages">
-              <h2 id="ov-pages" className="col-label">Important pages</h2>
-              <PageRefs pages={pages} onOpenPage={onOpenPage} className="mt-2.5" />
+          {!!c.key_concepts?.length && (
+            <section className={c.key_numbers?.length ? "mt-10" : ""} aria-labelledby="ov-concepts">
+              <h2 id="ov-concepts" className="t-heading-sm">Important concepts</h2>
+              <dl className="mt-3">
+                {c.key_concepts.map((k) => (
+                  <div key={k.name} className="border-t border-line py-3">
+                    <dt className="flex items-baseline justify-between gap-3">
+                      <span className="t-subheading">{k.name}</span>
+                      <PageRefs pages={k.pages} onOpenPage={onOpenPage} className="flex-shrink-0" />
+                    </dt>
+                    <dd className="t-body-sm mt-1">{k.definition}</dd>
+                  </div>
+                ))}
+              </dl>
             </section>
           )}
-        </div>
-      </div>
-
-      <section className="mt-12" aria-labelledby="ov-full">
-        <h2 id="ov-full" className="col-label">Full summary</h2>
-        <div className="mt-3 border-t border-line">
-          {covered.map((s) => (
-            <details key={s.key} className="group border-b border-line">
-              <summary className="flex cursor-pointer list-none items-center gap-3 py-3.5 text-[15px] font-medium text-ink marker:hidden hover:text-accent">
-                <ChevronRight size={15} className="flex-shrink-0 text-ink-faint transition-transform duration-200 group-open:rotate-90" />
-                <span className="flex-1">{s.title}</span>
-                <PageRefs pages={s.pages} onOpenPage={onOpenPage} />
-              </summary>
-              <div className="report-prose chat-prose pb-5 pl-7">
-                <ReactMarkdown>{s.body}</ReactMarkdown>
-              </div>
-            </details>
-          ))}
-        </div>
-        {missing.length > 0 && (
-          <p className="mt-4 text-[13px] leading-relaxed text-ink-faint">
-            Not specified in the paper: {missing.map((s) => s.title.toLowerCase()).join(", ")}.
-          </p>
-        )}
-      </section>
+          {pages.length > 0 && (
+            <section className="mt-10" aria-labelledby="ov-pages">
+              <h2 id="ov-pages" className="t-heading-sm">Where to read</h2>
+              <p className="t-body-sm mt-1.5">The pages this overview draws on most.</p>
+              <PageRefs pages={pages} onOpenPage={onOpenPage} className="-ml-1 mt-2.5" />
+            </section>
+          )}
+        </aside>
+      )}
     </div>
   );
 }
 
-export function OverviewView({ paperId, title, onOpenPage }: { paperId: string; title: string; onOpenPage: (p: number) => void }) {
+export function OverviewView({ paperId, onOpenPage }: { paperId: string; title?: string; onOpenPage: (p: number) => void }) {
   return (
-    <SectionShell title={title} meta="Overview">
-      <KitGate paperId={paperId} kind="summary" title="Summary">
+    <SectionShell title="Overview" meta="What the paper sets out to do, what it found, and where in the paper each point comes from.">
+      <KitGate paperId={paperId} kind="summary" title="Overview" placeholder={(still) => (still ? null : <OverviewPlaceholder still={false} />)}>
         {({ version }) => <OverviewBody paperId={paperId} version={version} onOpenPage={onOpenPage} />}
       </KitGate>
     </SectionShell>

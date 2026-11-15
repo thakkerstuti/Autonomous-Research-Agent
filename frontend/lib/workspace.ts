@@ -22,10 +22,12 @@ export interface Workspace {
     id: string;
     page?: number;
     tab?: string;
-    /** Paper Study workspace: open section, reader layout, assistant visibility */
+    /** Paper Study workspace: open section, reader layout, side pane (open, which tab), page list */
     view?: string;
     reader?: unknown;
     assistant?: boolean;
+    companion?: string;
+    rail?: boolean;
   } | null;
   research?: { sessionIds: string[]; pending?: PendingResearch | null } | null;
 }

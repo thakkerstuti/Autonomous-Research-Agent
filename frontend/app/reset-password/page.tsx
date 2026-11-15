@@ -49,13 +49,13 @@ export default function ResetPasswordPage() {
       <header className="flex h-16 items-center">
         <Link href="/" className="flex items-center gap-2 text-ink" aria-label="CogNexa home">
           <BrandMark size={20} />
-          <span className="font-display text-[16px] font-semibold tracking-[-0.03em]">CogNexa</span>
+          <span className="font-display text-[16px] font-semibold tracking-[-0.015em]">CogNexa</span>
         </Link>
       </header>
 
       <div className="mx-auto flex w-full max-w-[400px] flex-1 flex-col justify-center pb-16">
         <div className="animate-view-in rounded-[22px] bg-surface p-7 shadow-panel sm:p-8">
-          <h1 className="font-display text-[26px] font-semibold leading-[1.15] tracking-[-0.03em] text-ink">Choose a new password</h1>
+          <h1 className="font-display text-[26px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">Choose a new password</h1>
           <p className="mt-2 text-[14px] text-ink-soft">You&rsquo;ll be signed out everywhere, then you can sign in with the new password.</p>
 
           {done ? (

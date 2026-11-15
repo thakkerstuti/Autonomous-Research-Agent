@@ -1,9 +1,10 @@
-// Multi-page reader layout. Run with: npm test
+// Reader layout: view modes, panels, zoom, persistence. Run with: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  MAX_PANELS, MIN_FRACTION, initialLayout, openPanel, closePanel, showPage, setPanelPage, movePanel, focusPanel,
-  resizeColumn, resizeRow, rowsFor, rowSlices, setArrangement, resetLayout, toggleSelected, selectedPages, restoreLayout, focusedPanel,
+  MAX_PANELS, MIN_FRACTION, AUTO_MAX, AUTO_MIN, initialLayout, openPanel, closePanel, showPage, goToPage, showPages, setViewMode, modeOf,
+  setPanelPage, movePanel, focusPanel, resizeColumn, resizeRow, rowsFor, rowSlices, resetSizes, sizesAreEqual, toggleSelected,
+  selectedPages, comparePages, restoreLayout, focusedPanel, setZoom, resolveScale, stepZoom, checkPages,
 } from "../lib/reader-layout.ts";
 
 const pages = (l) => l.panels.map((p) => p.page);
@@ -16,123 +17,164 @@ function withPages(...ps) {
   return l;
 }
 
-test("layout presets: single, two, three, 2x2 grid, 3 over 2", () => {
-  assert.deepEqual([1, 2, 3, 4, 5].map((n) => rowsFor(n, "auto")), [[1], [2], [3], [2, 2], [3, 2]]);
-  assert.deepEqual(rowsFor(5, "columns"), [5]);
+test("starts as single-page reading", () => {
+  const l = initialLayout(3);
+  assert.deepEqual(pages(l), [3]);
+  assert.equal(modeOf(l), "single");
+  assert.equal(l.panels[0].zoom, "auto");
 });
 
-test("opening pages: at most five panels", () => {
-  let l = initialLayout(1);
-  for (let p = 2; p <= 5; p++) l = openPanel(l, p);
+test("rows: one row up to three pages, then 2x2 and 3 over 2", () => {
+  assert.deepEqual([1, 2, 3, 4, 5].map(rowsFor), [[1], [2], [3], [2, 2], [3, 2]]);
+});
+
+test("view modes: two and three pages add the following pages, single keeps the focused one", () => {
+  let l = initialLayout(4);
+  l = setViewMode(l, "two", 12);
+  assert.deepEqual(pages(l), [4, 5]);
+  assert.equal(modeOf(l), "two");
+  l = setViewMode(l, "three", 12);
+  assert.deepEqual(pages(l), [4, 5, 6]);
+  l = focusPanel(l, l.panels[1].id);
+  l = setViewMode(l, "single", 12);
+  assert.deepEqual(pages(l), [5]);
+  assert.equal(modeOf(l), "single");
+});
+
+test("going back up restores the pages that were closed by switching down", () => {
+  let l = showPages(initialLayout(1), [2, 9]);
+  l = setViewMode(l, "single", 12); // keeps page 2 (focused), remembers 9
+  assert.deepEqual(pages(l), [2]);
+  l = setViewMode(l, "two", 12);
+  assert.deepEqual(pages(l), [2, 9]);
+});
+
+test("view modes wrap at the end of the paper and respect short papers", () => {
+  assert.deepEqual(pages(setViewMode(initialLayout(12), "two", 12)), [12, 1]);
+  assert.deepEqual(pages(setViewMode(initialLayout(1), "three", 2)), [1, 2]);
+  assert.equal(setViewMode(initialLayout(1), "custom", 12).panels.length, 4);
+});
+
+test("panels: open up to five, the sixth is refused, closing keeps one", () => {
+  const l = withPages(1, 2, 3, 4, 5);
   assert.equal(l.panels.length, MAX_PANELS);
-  assert.equal(openPanel(l, 6), null); // the sixth is refused
-  assert.deepEqual(l.rows, [3, 2]);
+  assert.equal(openPanel(l, 6), null);
+  assert.equal(modeOf(l), "custom");
+  let c = closePanel(l, l.panels[2].id);
+  assert.deepEqual(pages(c), [1, 2, 4, 5]);
+  assert.deepEqual(c.rows, [2, 2]);
+  const one = initialLayout(1);
+  assert.equal(closePanel(one, one.panels[0].id), one);
 });
 
-test("a new panel opens next to the focused one and takes focus", () => {
-  let l = withPages(1, 2, 3);
-  l = focusPanel(l, l.panels[0].id);
-  l = openPanel(l, 9);
-  assert.deepEqual(pages(l), [1, 9, 2, 3]);
-  assert.equal(focusedPanel(l).page, 9);
-});
-
-test("closing a panel keeps at least one and moves focus sensibly", () => {
-  let l = withPages(1, 2, 3);
-  const mid = l.panels[1].id;
-  l = focusPanel(l, mid);
-  l = closePanel(l, mid);
-  assert.deepEqual(pages(l), [1, 3]);
-  assert.equal(focusedPanel(l).page, 3);
-  let one = initialLayout(4);
-  assert.equal(closePanel(one, one.panels[0].id).panels.length, 1);
-});
-
-test("switching the page inside a panel keeps the panel", () => {
-  let l = withPages(1, 2);
-  const id = l.panels[1].id;
-  l = setPanelPage(l, id, 7);
-  assert.deepEqual(pages(l), [1, 7]);
-  assert.equal(l.panels[1].id, id);
-});
-
-test("citations: focus an open page, else open it, else show it in the focused panel", () => {
-  let l = withPages(1, 2);
-  let r = showPage(l, 2);
+test("goToPage turns the focused page, or focuses a page that's already open", () => {
+  let l = initialLayout(1);
+  let r = goToPage(l, 7);
+  assert.equal(r.how, "turned");
+  assert.deepEqual(pages(r.layout), [7]);
+  l = withPages(2, 5);
+  r = goToPage(l, 2);
   assert.equal(r.how, "focused");
   assert.equal(focusedPanel(r.layout).page, 2);
-  r = showPage(l, 8);
-  assert.equal(r.how, "opened");
-  assert.deepEqual(pages(r.layout), [1, 2, 8]);
-  let full = withPages(1, 2, 3, 4, 5);
-  full = focusPanel(full, full.panels[1].id);
-  r = showPage(full, 9);
-  assert.equal(r.how, "replaced");
-  assert.deepEqual(pages(r.layout), [1, 9, 3, 4, 5]); // still five, nothing closed
+  assert.equal(r.layout.panels.length, 2);
 });
 
-test("drag and drop reorders panels and keeps sizes", () => {
+test("showPage still opens beside when asked", () => {
+  const r = showPage(initialLayout(1), 4);
+  assert.equal(r.how, "opened");
+  assert.deepEqual(pages(r.layout), [1, 4]);
+  const full = withPages(1, 2, 3, 4, 5);
+  assert.equal(showPage(full, 9).how, "replaced");
+});
+
+test("showPages shows exactly the pages asked for and keeps zoom of pages already open", () => {
+  let l = withPages(1, 2);
+  l = setZoom(l, l.panels[1].id, 1.5);
+  const s = showPages(l, [2, 6, 3]);
+  assert.deepEqual(pages(s), [2, 6, 3]);
+  assert.equal(s.panels[0].zoom, 1.5);
+  assert.equal(focusedPanel(s).page, 2);
+});
+
+test("checkPages validates range and the five-page limit", () => {
+  assert.equal(checkPages([2, 3], 12).error, "none");
+  assert.deepEqual(checkPages([0, 2], 12), { pages: [0, 2], error: "out_of_range", bad: 0 });
+  assert.equal(checkPages([13], 12).bad, 13);
+  assert.equal(checkPages([1, 2, 3, 4, 5, 6], 12).error, "too_many");
+  assert.deepEqual(checkPages([3, 3, 4], 12).pages, [3, 4]);
+});
+
+test("setPanelPage changes the page and keeps the panel and its zoom", () => {
+  let l = withPages(1, 2);
+  l = setZoom(l, l.panels[0].id, 2);
+  const id = l.panels[0].id;
+  l = setPanelPage(l, id, 9);
+  assert.equal(l.panels[0].id, id);
+  assert.equal(l.panels[0].page, 9);
+  assert.equal(l.panels[0].zoom, 2);
+});
+
+test("reorder moves a panel and keeps sizes", () => {
   let l = withPages(1, 2, 3);
   l = resizeColumn(l, 0, 0, 0.1);
-  const sizes = l.colSizes[0];
+  const sizes = l.colSizes;
   l = movePanel(l, 0, 2);
   assert.deepEqual(pages(l), [2, 3, 1]);
-  assert.deepEqual(l.colSizes[0], sizes);
-  assert.equal(movePanel(l, 0, 9), l); // out of range is ignored
+  assert.deepEqual(l.colSizes, sizes);
+  assert.equal(movePanel(l, 0, 9), l);
 });
 
-test("resizing columns respects the minimum and keeps rows summing to 1", () => {
+test("resizing clamps to the minimum share and sums stay at 1; reset equalises", () => {
   let l = withPages(1, 2);
-  l = resizeColumn(l, 0, 0, 0.2);
-  assert.ok(near(l.colSizes[0][0], 0.7) && near(sum(l.colSizes[0]), 1));
-  l = resizeColumn(l, 0, 0, 5); // dragged far past the edge
-  assert.ok(near(l.colSizes[0][1], MIN_FRACTION) && near(sum(l.colSizes[0]), 1));
-  assert.equal(resizeColumn(l, 0, 3, 0.1).colSizes[0], l.colSizes[0]); // no such divider
+  l = resizeColumn(l, 0, 0, 0.9);
+  assert.ok(near(l.colSizes[0][1], MIN_FRACTION));
+  assert.ok(near(sum(l.colSizes[0]), 1));
+  assert.equal(sizesAreEqual(l), false);
+  l = resetSizes(l);
+  assert.equal(sizesAreEqual(l), true);
+  let g = withPages(1, 2, 3, 4);
+  g = resizeRow(g, 0, -0.9);
+  assert.ok(near(g.rowSizes[0], MIN_FRACTION));
+  assert.deepEqual(rowSlices(g).map((r) => r.map((p) => p.page)), [[1, 2], [3, 4]]);
 });
 
-test("resizing rows in the grid", () => {
-  let l = withPages(1, 2, 3, 4);
-  assert.deepEqual(rowSlices(l).map((r) => r.map((p) => p.page)), [[1, 2], [3, 4]]);
-  l = resizeRow(l, 0, -0.2);
-  assert.ok(near(l.rowSizes[0], 0.3) && near(sum(l.rowSizes), 1));
-  l = resizeRow(l, 0, -1);
-  assert.ok(near(l.rowSizes[0], MIN_FRACTION));
-});
-
-test("arrangement and reset", () => {
-  let l = withPages(1, 2, 3, 4);
-  l = setArrangement(l, "columns");
-  assert.deepEqual(l.rows, [4]);
-  l = resizeColumn(l, 0, 1, 0.05);
-  l = resetLayout(l);
-  assert.deepEqual(l.rows, [2, 2]);
-  assert.ok(l.colSizes.every((row) => row.every((s) => near(s, 0.5))));
-  assert.deepEqual(pages(l), [1, 2, 3, 4]); // open pages kept
-});
-
-test("compare selection uses the ticked pages, de-duplicated, in page order", () => {
-  let l = withPages(5, 2, 7);
+test("compare: ticked pages, or every open page when none are ticked", () => {
+  let l = withPages(4, 2, 7);
+  assert.deepEqual(comparePages(l), [2, 4, 7]);
   l = toggleSelected(l, l.panels[0].id);
-  l = toggleSelected(l, l.panels[1].id);
-  assert.deepEqual(selectedPages(l), [2, 5]);
-  l = toggleSelected(l, l.panels[0].id); // untick
-  assert.deepEqual(selectedPages(l), [2]);
-  l = closePanel(l, l.panels[1].id);
-  assert.deepEqual(l.selected, []); // closing a panel drops it from the selection
+  l = toggleSelected(l, l.panels[2].id);
+  assert.deepEqual(selectedPages(l), [4, 7]);
+  assert.deepEqual(comparePages(l), [4, 7]);
 });
 
-test("saved layouts are restored, and bad ones rejected", () => {
+test("zoom: auto shows the whole page but stays readable and within the width, fit page uses the height, steps move between presets", () => {
+  const natural = { w: 816, h: 1056 };
+  assert.ok(near(resolveScale("width", natural, { w: 408, h: 900 }), 0.5));
+  assert.equal(resolveScale("auto", natural, { w: 3000, h: 3000 }), AUTO_MAX);
+  assert.ok(near(resolveScale("auto", natural, { w: 3000, h: 950.4 }), 0.9)); // the whole page fits
+  assert.equal(resolveScale("auto", natural, { w: 3000, h: 400 }), AUTO_MIN); // short window: readable, scrolls
+  assert.ok(near(resolveScale("auto", natural, { w: 408, h: 900 }), 0.5));
+  assert.equal(resolveScale("page", natural, { w: 3000, h: 528 }), 0.5);
+  assert.equal(resolveScale(1.5, natural, { w: 10, h: 10 }), 1.5);
+  assert.equal(resolveScale(9, natural, { w: 10, h: 10 }), 4);
+  assert.equal(stepZoom(1, 1), 1.1);
+  assert.equal(stepZoom(1, -1), 0.9);
+  assert.equal(stepZoom(0.93, 1), 1);
+  assert.equal(stepZoom(0.5, -1), 0.5);
+});
+
+test("restoreLayout keeps a valid saved layout, including zoom, and rejects bad ones", () => {
   let l = withPages(1, 2, 3);
-  l = resizeColumn(l, 0, 1, 0.1);
-  const saved = JSON.parse(JSON.stringify(l));
-  const back = restoreLayout(saved, 10);
-  assert.deepEqual(pages(back), [1, 2, 3]);
-  assert.deepEqual(back.colSizes, l.colSizes);
-  assert.equal(restoreLayout(saved, 2), null); // page 3 no longer exists
-  assert.equal(restoreLayout({ panels: [] }, 10), null);
-  assert.equal(restoreLayout("junk", 10), null);
-  const tooMany = { ...saved, panels: [1, 2, 3, 4, 5, 6].map((p) => ({ id: `x${p}`, page: p })) };
-  assert.equal(restoreLayout(tooMany, 10), null);
-  const badSizes = { ...saved, colSizes: [[0.9, 0.05, 0.05]] };
-  assert.ok(restoreLayout(badSizes, 10).colSizes[0].every((s) => near(s, 1 / 3))); // falls back to equal sizes
+  l = setZoom(l, l.panels[1].id, 1.75);
+  l = resizeColumn(l, 0, 0, 0.1);
+  const r = restoreLayout(JSON.parse(JSON.stringify(l)), 12);
+  assert.deepEqual(pages(r), [1, 2, 3]);
+  assert.equal(r.panels[1].zoom, 1.75);
+  assert.deepEqual(r.colSizes, l.colSizes);
+  assert.equal(restoreLayout({ ...l, panels: [{ id: "x", page: 40 }] }, 12), null);
+  assert.equal(restoreLayout({ panels: [] }, 12), null);
+  assert.equal(restoreLayout("junk", 12), null);
+  // older saved layouts without zoom still load
+  const old = restoreLayout({ panels: [{ id: "a", page: 2 }], focusedId: "a", arrangement: "columns", rows: [1], rowSizes: [1], colSizes: [[1]], selected: [] }, 12);
+  assert.equal(old.panels[0].zoom, "auto");
 });

@@ -1,19 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { UploadCloud, FileText, AlertCircle, Loader2, Check, ArrowLeft } from "lucide-react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { AlertCircle, ArrowRight, FileText } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
 import { PaperWorkspace } from "@/components/paper/workspace/paper-workspace";
-import { usePapersQuery } from "@/lib/queries";
+import { StudioBar } from "@/components/paper/studio-bar";
+import { usePaperPagesQueries, usePapersQuery } from "@/lib/queries";
 import { readWorkspace, updateWorkspace } from "@/lib/workspace";
 import { MAX_PDF_MB, MAX_PDF_PAGES, UploadPhase, uploadPaper } from "@/lib/paper-upload";
+import { ThinkingMark } from "@/components/research/thinking-mark";
 import { cn } from "@/lib/utils";
 
 type Step = "upload" | "level" | "study";
 type Level = "Beginner" | "Medium" | "Pro";
 
-function UploadStep({ onFile, error }: { onFile: (f: File, pages: number) => void; error: string | null }) {
+const LEVELS: { level: Level; desc: string }[] = [
+  { level: "Beginner", desc: "Plain language, every term explained, simple analogies." },
+  { level: "Medium", desc: "Assumes the basics. Focuses on the why." },
+  { level: "Pro", desc: "Concise and technical. Contribution and results." },
+];
+
+/** A thin progress line, as in the paper list. */
+function Progress({ pct, label }: { pct: number | null; label: string }) {
+  return (
+    <span className={cn("relative block h-px w-full overflow-hidden bg-line", pct === null && "scan")} role="progressbar" aria-label={label} aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100}>
+      {pct !== null && <span className="absolute inset-y-0 left-0 bg-primary transition-[width] duration-300 ease-out" style={{ width: `${Math.max(pct, 3)}%` }} />}
+    </span>
+  );
+}
+
+function DropZone({ onFile, error }: { onFile: (f: File, pages: number) => void; error: string | null }) {
   const [dragOver, setDragOver] = useState(false);
   const [reading, setReading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -49,48 +67,26 @@ function UploadStep({ onFile, error }: { onFile: (f: File, pages: number) => voi
   const shownError = localError ?? error;
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex min-h-full max-w-[640px] flex-col justify-center px-5 py-12 sm:px-7">
-        <div className="animate-view-in">
-          <h1 className="font-display text-display-xl font-semibold text-ink">
-            Study a paper, page by page.
-          </h1>
-          <p className="mt-4 max-w-[50ch] text-[15px] leading-relaxed text-ink-soft">
-            Upload a PDF and CogNexa explains every page at the depth you choose: a summary, the key points, the terms and the figures.
-          </p>
-        </div>
-
-        <label
-          className={cn(
-            "animate-view-in group relative mt-10 flex cursor-pointer flex-col items-center gap-4 overflow-hidden rounded-[22px] border border-dashed px-6 py-14 text-center transition-[border-color,background-color,transform] duration-200 ease-out",
-            dragOver ? "scale-[1.01] border-accent bg-accent-soft" : "border-line-hover bg-surface hover:border-ink-faint/50"
-          )}
-          style={{ animationDelay: "80ms" }}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-            const f = e.dataTransfer.files[0];
-            if (f) read(f);
-          }}
-        >
-          <span
-            className={cn(
-              "flex h-12 w-12 items-center justify-center rounded-2xl transition-colors duration-200",
-              dragOver ? "bg-accent text-on-primary" : "bg-surface3 text-ink-soft group-hover:text-ink"
-            )}
-          >
-            {reading ? <Loader2 size={20} className="animate-spin" /> : <UploadCloud size={20} strokeWidth={1.75} />}
-          </span>
-          <span>
-            <span className="block text-[15px] font-medium text-ink">
-              {reading ? "Reading the PDF…" : dragOver ? "Drop to open" : "Drop a PDF here, or click to choose"}
-            </span>
-            <span className="mt-1 block text-[13px] text-ink-faint">
-              Up to {MAX_PDF_MB} MB and {MAX_PDF_PAGES} pages · needs selectable text (scanned PDFs need OCR first)
-            </span>
-          </span>
+    <>
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const f = e.dataTransfer.files[0];
+          if (f) read(f);
+        }}
+        className={cn(
+          "flex min-h-[248px] flex-col items-center justify-center border border-dashed px-6 py-12 text-center transition-colors duration-200",
+          dragOver ? "border-accent bg-accent-soft" : "border-line-hover bg-surface"
+        )}
+      >
+        <p className="font-serif text-[22px] leading-tight text-ink">{reading ? "Reading the PDF…" : dragOver ? "Drop to open" : "Drop your PDF here"}</p>
+        <p className="mt-2 text-[12.5px] text-ink-soft">A new perspective starts with a paper.</p>
+        <label className={cn("mt-7 inline-flex h-9 cursor-pointer items-center gap-2 rounded-[3px] bg-primary px-5 text-[12.5px] font-medium text-on-primary transition-opacity hover:opacity-90", reading && "pointer-events-none opacity-60")}>
+          {reading && <ThinkingMark active size={12} />}
+          Browse PDF
           <input
             type="file"
             accept="application/pdf,.pdf"
@@ -98,74 +94,112 @@ function UploadStep({ onFile, error }: { onFile: (f: File, pages: number) => voi
             onChange={(e) => { const f = e.target.files?.[0]; if (f) read(f); e.target.value = ""; }}
           />
         </label>
-
-        {shownError && (
-          <div role="alert" className="mt-4 flex items-center gap-2 rounded-xl bg-bad/10 px-4 py-3 text-[13px] text-bad">
-            <AlertCircle size={15} className="flex-shrink-0" /> {shownError}
-          </div>
-        )}
+        <p className="mt-6 text-[11.5px] text-ink-faint">
+          PDF files up to {MAX_PDF_MB} MB and {MAX_PDF_PAGES} pages, with selectable text (scans need OCR first)
+        </p>
       </div>
-    </div>
-  );
-}
-
-function LevelCard({
-  title, desc, selected, onClick, disabled,
-}: { title: string; desc: string; selected: boolean; onClick: () => void; disabled?: boolean }) {
-  return (
-    <button
-      onClick={onClick}
-      role="radio"
-      aria-checked={selected}
-      disabled={disabled}
-      className={cn(
-        "pressable relative rounded-2xl bg-surface p-5 text-left disabled:opacity-60",
-        selected ? "shadow-[0_0_0_1.5px_rgb(var(--accent))]" : "shadow-sm hover:shadow-panel"
+      {shownError && (
+        <p role="alert" className="mt-3 flex items-center gap-2 text-[13px] text-bad">
+          <AlertCircle size={14} className="flex-shrink-0" /> {shownError}
+        </p>
       )}
-    >
-      <span
-        className={cn(
-          "absolute right-4 top-4 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-on-primary transition-[transform,opacity] duration-200 ease-out",
-          selected ? "scale-100 opacity-100" : "scale-75 opacity-0"
-        )}
-      >
-        <Check size={12} strokeWidth={2.5} />
-      </span>
-      <div className="mb-1.5 text-[14px] font-semibold text-ink">{title}</div>
-      <p className="text-[13px] leading-relaxed text-ink-soft">{desc}</p>
-    </button>
+    </>
   );
 }
 
 function UploadProgress({ phase, pct }: { phase: UploadPhase; pct: number }) {
   const extracting = phase === "extracting";
   return (
-    <div className="animate-view-in mt-8 rounded-2xl bg-surface p-5 shadow-sm" role="status" aria-live="polite">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[14px] font-medium text-ink">
-          {extracting ? "Extracting text from every page…" : "Uploading the PDF…"}
-        </span>
-        <span className="mono text-[12.5px] text-ink-faint">{extracting ? "" : `${pct}%`}</span>
+    <div className="mt-7" role="status" aria-live="polite">
+      <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
+        <span className="text-ink">{extracting ? "Extracting text from every page…" : "Uploading the PDF…"}</span>
+        <span className="mono text-ink-faint">{extracting ? "" : `${pct}%`}</span>
       </div>
-      <div
-        className={cn("mt-3 h-1.5 overflow-hidden rounded-full bg-ink/[0.07]", extracting && "scan")}
-        role="progressbar"
-        aria-label={extracting ? "Extracting text" : "Uploading"}
-        aria-valuenow={extracting ? undefined : pct}
-        aria-valuemin={0}
-        aria-valuemax={100}
-      >
-        {!extracting && <div className="h-full rounded-full bg-accent transition-[width] duration-200 ease-out" style={{ width: `${Math.max(pct, 2)}%` }} />}
-      </div>
+      <div className="mt-2.5"><Progress pct={extracting ? null : pct} label={extracting ? "Extracting text" : "Uploading"} /></div>
     </div>
   );
 }
 
-export default function PaperStudyPage({ searchParams }: { searchParams: { paperId?: string } }) {
+/** The papers this person studied most recently, from their library, with live progress. */
+function RecentPapers({ uploading, onOpen }: { uploading: { name: string; phase: UploadPhase; pct: number } | null; onOpen: (id: string) => void }) {
+  const { data: papers } = usePapersQuery();
+  const recent = (papers ?? []).slice(0, 5);
+  const processing = recent.filter((p) => p.status === "processing").map((p) => p.id);
+  const progress = usePaperPagesQueries(processing);
+  const saved = useMemo(() => readWorkspace().paper, []);
+  if (!recent.length && !uploading) return null;
+
+  const savedPage = (() => {
+    const layout = saved?.reader as { panels?: { id: string; page: number }[]; focusedId?: string } | undefined;
+    return layout?.panels?.find((p) => p.id === layout.focusedId)?.page ?? layout?.panels?.[0]?.page;
+  })();
+
+  return (
+    <section className="mt-16" aria-labelledby="recent-heading">
+      <div className="flex items-baseline justify-between">
+        <h2 id="recent-heading" className="font-heading text-[25px] leading-tight text-ink">Recently uploaded</h2>
+        {(papers?.length ?? 0) > 5 && (
+          <Link href="/library" className="text-[12.5px] text-ink-soft transition-colors hover:text-ink">All papers</Link>
+        )}
+      </div>
+      <ul className="mt-4 border-t border-line">
+        {uploading && (
+          <li className="grid grid-cols-[minmax(0,1fr)_minmax(120px,176px)] items-center gap-6 border-b border-line py-4">
+            <div className="min-w-0">
+              <p className="truncate text-[13.5px] font-medium text-ink">{uploading.name}</p>
+              <p className="mt-0.5 text-[12px] text-accent">{uploading.phase === "extracting" ? "Extracting text…" : "Uploading…"}</p>
+            </div>
+            <Progress pct={uploading.phase === "extracting" ? null : uploading.pct} label={`Uploading ${uploading.name}`} />
+          </li>
+        )}
+        {recent.map((p) => {
+          const i = processing.indexOf(p.id);
+          const pages = i >= 0 ? progress[i]?.data?.pages : undefined;
+          const done = pages?.filter((x) => x.status === "ready" || x.status === "failed").length ?? 0;
+          const pct = pages?.length ? Math.round((done / pages.length) * 100) : null;
+          const sub =
+            p.status === "processing" ? "Writing page notes…"
+            : p.status === "failed" ? "Needs attention: open it to see why"
+            : saved?.id === p.id && savedPage ? `Continue reading · Page ${savedPage}`
+            : `${p.pages} ${p.pages === 1 ? "page" : "pages"} · ${p.uploaded}`;
+          return (
+            <li key={p.id} className="group border-b border-line">
+              <button type="button" onClick={() => onOpen(p.id)} className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-6 py-4 text-left">
+                <span className="min-w-0">
+                  <span className="block truncate text-[13.5px] font-medium text-ink transition-colors group-hover:text-accent">{p.title}</span>
+                  <span className={cn("mt-0.5 block text-[12px]", p.status === "processing" ? "text-accent" : p.status === "failed" ? "text-bad" : "text-ink-faint")}>{sub}</span>
+                </span>
+                {p.status === "processing" ? (
+                  <span className="block w-[clamp(120px,24vw,176px)]"><Progress pct={pct} label={`Page notes for ${p.title}`} /></span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-[12.5px] text-ink-soft transition-colors group-hover:text-ink">
+                    Open <ArrowRight size={13} />
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** The page is prerendered as static, so the URL is read on the client (the searchParams prop would be empty). */
+export default function PaperStudyPage() {
+  return (
+    <Suspense fallback={null}>
+      <PaperStudy />
+    </Suspense>
+  );
+}
+
+function PaperStudy() {
   const queryClient = useQueryClient();
+  const urlPaperId = useSearchParams().get("paperId") || undefined;
   // The paper to show: the one in the URL, else the one this user had open
-  const [paperId, setPaperId] = useState<string | null>(() => searchParams.paperId || readWorkspace().paper?.id || null);
-  const [step, setStep] = useState<Step>(() => (searchParams.paperId || readWorkspace().paper?.id ? "study" : "upload"));
+  const [paperId, setPaperId] = useState<string | null>(() => urlPaperId || readWorkspace().paper?.id || null);
+  const [step, setStep] = useState<Step>(() => (urlPaperId || readWorkspace().paper?.id ? "study" : "upload"));
   const [file, setFile] = useState<File | null>(null);
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -183,10 +217,10 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
 
   // Opening a specific paper from the library or dashboard
   useEffect(() => {
-    if (searchParams.paperId && searchParams.paperId !== paperId) openPaper(searchParams.paperId);
-    else if (paperId && step === "study" && !searchParams.paperId) openPaper(paperId);
+    if (urlPaperId && urlPaperId !== paperId) openPaper(urlPaperId);
+    else if (paperId && step === "study" && !urlPaperId) openPaper(paperId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams.paperId]);
+  }, [urlPaperId]);
 
   const studyAnother = useCallback(() => {
     updateWorkspace((w) => ({ ...w, paper: null }));
@@ -226,65 +260,88 @@ export default function PaperStudyPage({ searchParams }: { searchParams: { paper
     return <PaperWorkspace key={paperId} paperId={paperId} onStudyAnother={studyAnother} />;
   }
 
-  if (step === "level" && file) {
-    const busy = upload !== null;
-    return (
-      <div className="h-full overflow-y-auto">
-        <div className="mx-auto flex min-h-full max-w-[680px] flex-col justify-center px-5 py-12 sm:px-7">
-          <div className="animate-view-in flex items-center gap-3 rounded-2xl bg-surface p-3.5 shadow-sm">
-            <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-surface3 text-ink-soft">
-              <FileText size={18} strokeWidth={1.75} />
-            </span>
-            <div className="min-w-0">
-              <div className="truncate text-[14px] font-medium text-ink">{file.name}</div>
-              <div className="mono text-[12px] text-ink-faint">
-                {pageCount} pages · {(file.size / 1024 / 1024).toFixed(1)} MB
+  const busy = upload !== null;
+
+  return (
+    <div className="flex h-full flex-col">
+      <StudioBar />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[720px] px-5 pb-14 pt-[clamp(48px,10vh,104px)] sm:px-6">
+          <header className="text-center">
+            <h1 className="font-heading text-[clamp(34px,4.2vw,46px)] leading-[1.08] text-ink">What are you curious about?</h1>
+            <p className="mt-3 text-[13.5px] text-ink-soft">Bring a paper. Make sense of it.</p>
+          </header>
+
+          <div className="mt-12">
+            {step === "level" && file ? (
+              <div className="border border-line-hover bg-surface px-6 py-8 sm:px-9">
+                <div className="flex items-center gap-3">
+                  <FileText size={18} strokeWidth={1.6} className="flex-shrink-0 text-ink-soft" />
+                  <div className="min-w-0">
+                    <p className="truncate text-[13.5px] font-medium text-ink">{file.name}</p>
+                    <p className="mono text-[11.5px] text-ink-faint">{pageCount} pages · {(file.size / 1024 / 1024).toFixed(1)} MB</p>
+                  </div>
+                </div>
+
+                {existing && !busy && (
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3 bg-accent-soft px-4 py-3 text-[13px] text-ink">
+                    <span>You&rsquo;ve already uploaded this paper. Open it instead of processing it again?</span>
+                    <button type="button" onClick={() => openPaper(existing.id)} className="font-medium text-ink underline decoration-accent-line underline-offset-4 hover:decoration-accent">
+                      Open existing
+                    </button>
+                  </div>
+                )}
+
+                <h2 className="mt-8 font-serif text-[21px] leading-tight text-ink">How should CogNexa explain it?</h2>
+                <p className="mt-1.5 text-[13px] text-ink-soft">Pick the depth that fits your background. You can switch later.</p>
+
+                <div role="radiogroup" aria-label="Explanation level" className="mt-5 grid gap-2 sm:grid-cols-3">
+                  {LEVELS.map(({ level: l, desc }) => (
+                    <button
+                      key={l}
+                      type="button"
+                      role="radio"
+                      aria-checked={level === l}
+                      disabled={busy}
+                      onClick={() => setLevel(l)}
+                      className={cn(
+                        "border px-4 py-3.5 text-left transition-colors disabled:opacity-60",
+                        level === l ? "border-accent bg-accent-soft" : "border-line hover:border-line-hover"
+                      )}
+                    >
+                      <span className="block text-[13.5px] font-medium text-ink">{l}</span>
+                      <span className="mt-1 block text-[12px] leading-snug text-ink-soft">{desc}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {upload && <UploadProgress phase={upload.phase} pct={upload.pct} />}
+
+                <div className="mt-8 flex items-center justify-between gap-3">
+                  <button type="button" onClick={() => setStep("upload")} disabled={busy} className="text-[12.5px] text-ink-soft transition-colors hover:text-ink disabled:opacity-40">
+                    Back
+                  </button>
+                  <button type="button" onClick={begin} disabled={busy} className="inline-flex h-9 items-center gap-2 rounded-[3px] bg-primary px-5 text-[12.5px] font-medium text-on-primary transition-opacity hover:opacity-90 disabled:opacity-60">
+                    {busy && <ThinkingMark active size={12} />}
+                    Begin study session
+                  </button>
+                </div>
+                {error && (
+                  <p role="alert" className="mt-4 flex items-center gap-2 text-[13px] text-bad">
+                    <AlertCircle size={14} className="flex-shrink-0" /> {error}
+                  </p>
+                )}
               </div>
-            </div>
+            ) : (
+              <DropZone onFile={handleFile} error={error} />
+            )}
           </div>
 
-          {existing && !busy && (
-            <div className="animate-view-in mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-accent-soft px-4 py-3 text-[13.5px] text-ink">
-              <span>You&rsquo;ve already uploaded this paper. Open it instead of processing it again?</span>
-              <Button size="sm" variant="outline" onClick={() => openPaper(existing.id)}>
-                Open existing
-              </Button>
-            </div>
-          )}
+          <RecentPapers uploading={upload && file ? { name: file.name, ...upload } : null} onOpen={openPaper} />
 
-          <h2 className="animate-view-in mt-10 font-display text-display font-semibold text-ink" style={{ animationDelay: "60ms" }}>
-            How should CogNexa explain it?
-          </h2>
-          <p className="animate-view-in mt-2 text-[15px] text-ink-soft" style={{ animationDelay: "60ms" }}>
-            Pick the depth that fits your background. You can switch later.
-          </p>
-
-          <div role="radiogroup" aria-label="Explanation level" className="animate-view-in mt-7 grid grid-cols-1 gap-3 sm:grid-cols-3" style={{ animationDelay: "120ms" }}>
-            <LevelCard title="Beginner" desc="Plain language, every term explained, simple analogies." selected={level === "Beginner"} onClick={() => setLevel("Beginner")} disabled={busy} />
-            <LevelCard title="Medium" desc="Assumes the basics. Focuses on the why." selected={level === "Medium"} onClick={() => setLevel("Medium")} disabled={busy} />
-            <LevelCard title="Pro" desc="Concise and technical. Contribution and results." selected={level === "Pro"} onClick={() => setLevel("Pro")} disabled={busy} />
-          </div>
-
-          {upload && <UploadProgress phase={upload.phase} pct={upload.pct} />}
-
-          <div className="mt-10 flex items-center justify-between gap-3">
-            <Button variant="ghost" onClick={() => setStep("upload")} disabled={busy}>
-              <ArrowLeft size={15} /> Back
-            </Button>
-            <Button size="lg" onClick={begin} disabled={busy}>
-              {busy ? <Loader2 size={16} className="animate-spin" /> : null}
-              Begin study session
-            </Button>
-          </div>
-          {error && (
-            <div role="alert" className="mt-4 flex items-center gap-2 rounded-xl bg-bad/10 px-4 py-3 text-[13px] text-bad">
-              <AlertCircle size={15} className="flex-shrink-0" /> {error}
-            </div>
-          )}
+          <p className="mt-20 text-center font-serif text-[14px] italic text-ink-faint">A quieter place for deeper thinking.</p>
         </div>
       </div>
-    );
-  }
-
-  return <UploadStep onFile={handleFile} error={error} />;
+    </div>
+  );
 }

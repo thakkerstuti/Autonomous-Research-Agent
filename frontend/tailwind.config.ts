@@ -11,6 +11,7 @@ const config: Config = {
       colors: {
         bg:        rgb("--bg"),
         canvas:    rgb("--canvas"),
+        desk:      rgb("--desk"),
         surface:   rgb("--surface"),
         surface2:  rgb("--surface-2"),
         surface3:  rgb("--surface-3"),
@@ -53,9 +54,9 @@ const config: Config = {
       },
       fontSize: {
         /* Editorial scale — serif display, sans interface, mono data */
-        "display-xl": ["clamp(30px, 3vw, 40px)", { lineHeight: "1.1", letterSpacing: "-0.035em" }],
-        display:      ["clamp(26px, 2.4vw, 32px)", { lineHeight: "1.15", letterSpacing: "-0.03em" }],
-        title:        ["21px", { lineHeight: "1.25", letterSpacing: "-0.022em" }],
+        "display-xl": ["clamp(30px, 3vw, 40px)", { lineHeight: "1.1", letterSpacing: "-0.02em" }],
+        display:      ["clamp(26px, 2.4vw, 32px)", { lineHeight: "1.15", letterSpacing: "-0.018em" }],
+        title:        ["21px", { lineHeight: "1.25", letterSpacing: "-0.012em" }],
         "title-sm":   ["16.5px", { lineHeight: "1.3", letterSpacing: "-0.015em" }],
         heading:      ["14.5px", { lineHeight: "1.35", letterSpacing: "-0.01em" }],
         "body-lg":    ["16.5px", { lineHeight: "1.7" }],

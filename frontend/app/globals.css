@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wdth,wght@0,75..100,400..700;1,75..100,400..700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,400..600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -40,16 +39,21 @@
   --line:       rgb(24 38 28 / 0.10);
   --line-hover: rgb(24 38 28 / 0.20);
 
-  --font-sans: "Instrument Sans";
-  --font-display: "Instrument Sans";
-  --font-serif: "Source Serif 4";
-  --font-mono: "IBM Plex Mono";
+  --font-sans: var(--nf-sans);
+  --font-display: var(--nf-display);
+  --font-serif: var(--nf-display);
+  --font-mono: var(--nf-mono);
 
   --shadow-sm:          0 1px 2px rgb(24 38 28 / 0.05), 0 0 0 1px var(--line);
   --shadow-panel:       0 1px 2px rgb(24 38 28 / 0.05), 0 10px 28px -8px rgb(24 38 28 / 0.14), 0 0 0 1px var(--line);
   --shadow-panel-hover: 0 2px 4px rgb(24 38 28 / 0.06), 0 18px 44px -12px rgb(24 38 28 / 0.20), 0 0 0 1px var(--line-hover);
   --shadow-panel-drag:  0 4px 8px rgb(22 21 20 / 0.06), 0 28px 64px -12px rgb(22 21 20 / 0.24), 0 0 0 1px var(--accent-line);
   --glass: rgb(250 249 244 / 0.85);
+
+  /* Reading desk: the neutral ground a PDF page sits on */
+  --desk:        214 218 209;
+  --desk-line:   rgb(24 38 28 / 0.12);
+  --sheet-shadow: 0 0 0 1px rgb(24 38 28 / 0.10), 0 1px 2px rgb(24 38 28 / 0.10), 0 12px 28px -14px rgb(24 38 28 / 0.32);
 
   --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
@@ -92,6 +96,10 @@ html.dark {
   --shadow-panel-hover: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 18px 44px -10px rgb(0 0 0 / 0.7), 0 0 0 1px var(--line-hover);
   --shadow-panel-drag:  0 1px 0 rgb(255 255 255 / 0.06) inset, 0 30px 70px -12px rgb(0 0 0 / 0.85), 0 0 0 1px var(--accent-line);
   --glass: rgb(21 31 24 / 0.82);
+
+  --desk:        9 13 10;
+  --desk-line:   rgb(239 237 230 / 0.07);
+  --sheet-shadow: 0 0 0 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.4), 0 18px 40px -16px rgb(0 0 0 / 0.8);
 
   color-scheme: dark;
 }
@@ -620,3 +628,228 @@ html.dark .auth-bg::before { mix-blend-mode: screen; opacity: 0.12; }
     linear-gradient(165deg, #22382A 0%, #17271C 55%, #121E16 100%);
   box-shadow: 0 30px 70px -30px rgb(20 36 24 / 0.55), inset 0 1px 0 rgb(239 237 230 / 0.06);
 }
+
+/* ══════════════════════════════════════════════
+   PAPER READER
+   ══════════════════════════════════════════════ */
+.reader-desk {
+  background: rgb(var(--desk));
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--ink) / 0.22) transparent;
+}
+.reader-desk::-webkit-scrollbar { width: 10px; height: 10px; }
+.reader-desk::-webkit-scrollbar-thumb { background: rgb(var(--ink) / 0.2); border-radius: 10px; border: 3px solid rgb(var(--desk)); }
+.reader-desk::-webkit-scrollbar-corner { background: transparent; }
+.reader-sheet { background: #fff; box-shadow: var(--sheet-shadow); }
+/* The original page keeps its own colours; only the selection is themed */
+.reader-sheet .textLayer ::selection { background: rgb(168 121 42 / 0.32); }
+.notes-prose p { margin: 0 0 0.8em; }
+.notes-prose p:last-child { margin-bottom: 0; }
+.notes-prose strong { font-weight: 600; color: rgb(var(--ink)); }
+.notes-prose ul { margin: 0.4em 0 0.8em; padding-left: 1.1em; list-style: disc; }
+.notes-prose li { margin: 0.2em 0; }/* Full-screen reading: page transitions must not become the reader's containing block */
+.reader-immersive .page-enter { animation: none; }
+
+/* ══════════════════════════════════════════════
+   TYPE SYSTEM — Paper Study and every reading surface
+   Newsreader carries meaning (titles, headings, summaries);
+   Plex Sans carries the interface; Plex Mono carries measurements.
+   ══════════════════════════════════════════════ */
+@layer components {
+  .t-doc-title {
+    font-family: var(--font-display), Georgia, serif; font-optical-sizing: auto;
+    font-size: 19px; line-height: 1.2; font-weight: 500; letter-spacing: -0.012em; color: rgb(var(--ink));
+  }
+  .t-page-title {
+    font-family: var(--font-display), Georgia, serif; font-optical-sizing: auto;
+    font-size: 34px; line-height: 1.12; font-weight: 500; letter-spacing: -0.02em; color: rgb(var(--ink));
+    text-wrap: balance;
+  }
+  .t-heading {
+    font-family: var(--font-display), Georgia, serif; font-optical-sizing: auto;
+    font-size: 21px; line-height: 1.25; font-weight: 500; letter-spacing: -0.012em; color: rgb(var(--ink));
+  }
+  .t-subheading { font-family: var(--font-sans), system-ui, sans-serif; font-size: 13.5px; line-height: 1.35; font-weight: 600; color: rgb(var(--ink)); }
+  .t-lead {
+    font-family: var(--font-display), Georgia, serif; font-optical-sizing: auto;
+    font-size: 21px; line-height: 1.55; font-weight: 400; letter-spacing: -0.006em; color: rgb(var(--ink));
+  }
+  .t-body { font-size: 15px; line-height: 1.68; color: rgb(var(--ink)); }
+  .t-body-sm { font-size: 14px; line-height: 1.6; color: rgb(var(--ink-soft)); }
+  .t-desc { font-size: 14.5px; line-height: 1.6; color: rgb(var(--ink-soft)); max-width: 62ch; }
+  .t-label { font-size: 12.5px; line-height: 1.3; font-weight: 500; color: rgb(var(--ink-soft)); }
+  .t-meta {
+    font-family: var(--font-mono), ui-monospace, monospace; font-variant-numeric: tabular-nums;
+    font-size: 11.5px; line-height: 1.4; color: rgb(var(--ink-faint));
+  }
+  /* Kept for older markup: same as .t-heading */
+  .study-heading { @apply t-heading; }
+
+  /* The page frame every study section is written in */
+  .study-page { margin: 0 auto; width: 100%; max-width: 1180px; padding: 40px 24px 96px; }
+  @media (min-width: 768px) { .study-page { padding: 48px 40px 112px; } }
+  @media (min-width: 1280px) { .study-page { padding: 56px 56px 120px; } }
+  @media (max-width: 640px) { .t-page-title { font-size: 28px; } .t-lead { font-size: 19px; } }
+}
+@layer components {
+  /* Page reference: a small mono citation that takes the reader to the page */
+  .page-ref {
+    font-family: var(--font-mono), ui-monospace, monospace; font-variant-numeric: tabular-nums;
+    font-size: 11.5px; line-height: 1.5; color: rgb(var(--accent));
+    padding: 0 4px; border-radius: 4px;
+    text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 3px;
+    transition: background-color 150ms, text-decoration-color 150ms;
+  }
+  .page-ref:hover { background: var(--accent-soft); text-decoration-color: rgb(var(--accent)); }
+
+  /* One line of status: working, partial, failed. Informs without taking over. */
+  .status-note {
+    position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 20px;
+    padding: 12px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: rgb(var(--ink) / 0.025); overflow: hidden;
+    font-size: 13.5px; line-height: 1.5; color: rgb(var(--ink-soft));
+  }
+  .status-note--bad { border-color: rgb(var(--bad) / 0.28); background: rgb(var(--bad) / 0.05); }
+  .status-note--warn { border-color: rgb(var(--warn) / 0.3); background: rgb(var(--warn) / 0.05); }
+  .status-note + * { margin-top: 0; }
+
+  /* Quiet text action used inside status lines and empty states */
+  .text-action {
+    display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+    font-size: 13px; font-weight: 500; color: rgb(var(--ink));
+    text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 4px;
+    transition: text-decoration-color 150ms, opacity 150ms;
+  }
+  .text-action:hover { text-decoration-color: rgb(var(--accent)); }
+  .text-action:disabled { opacity: 0.5; pointer-events: none; }
+}
+@layer components {
+  .t-heading-sm {
+    font-family: var(--font-display), Georgia, serif; font-optical-sizing: auto;
+    font-size: 17px; line-height: 1.3; font-weight: 500; letter-spacing: -0.008em; color: rgb(var(--ink));
+  }
+}
+@layer components {
+  /* Flashcards: a real card with presence, two faces for the flip */
+  .flashcard-face {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    padding: 28px 32px; border-radius: 14px; border: 1px solid var(--line);
+    background: rgb(var(--surface)); backface-visibility: hidden;
+    box-shadow: 0 1px 2px rgb(var(--ink) / 0.05), 0 22px 44px -28px rgb(var(--ink) / 0.35);
+  }
+  html.dark .flashcard-face { box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 48px -26px rgb(0 0 0 / 0.75); }
+  @media (min-width: 640px) { .flashcard-face { padding: 32px 40px; } }
+
+  .kbd {
+    font-family: var(--font-mono), ui-monospace, monospace; font-size: 10.5px; line-height: 1;
+    padding: 3px 6px; border-radius: 4px; border: 1px solid var(--line-hover); color: rgb(var(--ink-soft));
+  }
+
+  /* Known / Need revision: distinct, and each shows when it's the card's current mark */
+  .mark-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: 40px; padding: 0 18px; border-radius: 8px; font-size: 13.5px; font-weight: 500;
+    transition: background-color 150ms, border-color 150ms, color 150ms, opacity 150ms;
+  }
+  .mark-btn:disabled { opacity: 0.6; pointer-events: none; }
+  .mark-btn--review { border: 1px solid rgb(var(--warn) / 0.45); color: rgb(var(--warn)); background: transparent; }
+  .mark-btn--review:hover, .mark-btn--review.is-on { background: rgb(var(--warn) / 0.1); border-color: rgb(var(--warn) / 0.7); }
+  .mark-btn--known { border: 1px solid transparent; background: rgb(var(--ok)); color: rgb(var(--bg)); }
+  .mark-btn--known:hover { background: rgb(var(--ok) / 0.88); }
+  .mark-btn--known.is-on { box-shadow: 0 0 0 2px rgb(var(--bg)), 0 0 0 3.5px rgb(var(--ok)); }
+}
+@layer components {
+  /* Section status in the Paper Study header */
+  .status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 99px; flex-shrink: 0; }
+  .status-dot--not_started { box-shadow: inset 0 0 0 1px rgb(var(--ink-faint) / 0.8); }
+  .status-dot--waiting { background: rgb(var(--ink-faint) / 0.6); }
+  .status-dot--generating { background: rgb(var(--accent)); animation: statusPulse 1.4s var(--ease-in-out) infinite; }
+  .status-dot--failed { background: rgb(var(--bad)); }
+}
+@keyframes statusPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .status-dot--generating { animation: none; } }
+/* Study layouts respond to the space the section actually has (the side pane
+   and app sidebar change it), not to the window: container queries. */
+.study-page { container-type: inline-size; container-name: study; }
+.split-aside, .split-index, .split-deck { display: grid; row-gap: 48px; }
+.insight-cols { display: grid; }
+.split-deck > .split-side { order: 2; }
+@container study (min-width: 900px) {
+  .split-aside { grid-template-columns: minmax(0, 1fr) 280px; column-gap: 56px; }
+  .split-aside > .split-side { position: sticky; top: 32px; align-self: start; }
+  .split-deck { grid-template-columns: minmax(0, 1fr) 240px; column-gap: 56px; }
+  .split-deck > .split-side { order: 2; position: sticky; top: 32px; align-self: start; }
+  .deck-narrow-only { display: none; }
+}
+@container study (max-width: 899.98px) { .deck-wide-only { display: none; } .split-deck .placeholder-side { display: none; } }
+@container study (min-width: 1060px) {
+  .split-aside { grid-template-columns: minmax(0, 1fr) 320px; column-gap: 72px; }
+  .split-deck { grid-template-columns: minmax(0, 1fr) 260px; column-gap: 72px; }
+}
+@container study (min-width: 760px) {
+  .split-index { grid-template-columns: 188px minmax(0, 1fr); column-gap: 48px; }
+  .split-index > .split-side { position: sticky; top: 32px; align-self: start; }
+  .split-index .index-list { display: grid; gap: 2px; overflow: visible; margin: 0; padding-bottom: 0; }
+}
+@container study (min-width: 960px) { .insight-cols { grid-template-columns: 1fr 1fr; column-gap: 56px; } }
+
+/* ----------------------------------------------
+   STUDIO � PDF upload and Paper Study (approved Figma design)
+   Scoped palette and type; the rest of the app keeps its own.
+   ---------------------------------------------- */
+.studio {
+  --bg:         247 247 242;
+  --canvas:     242 243 237;
+  --surface:    251 251 248;
+  --surface-2:  240 242 236;
+  --surface-3:  229 233 224;
+  --ink:        29 42 34;
+  --ink-soft:   84 96 87;
+  --ink-faint:  108 118 110;
+  --primary:    35 77 56;
+  --on-primary: 247 247 242;
+  --accent:        47 107 74;
+  --accent-strong: 35 77 56;
+  --accent-soft:   rgb(47 107 74 / 0.1);
+  --accent-line:   rgb(47 107 74 / 0.32);
+  --line:       rgb(29 42 34 / 0.09);
+  --line-hover: rgb(29 42 34 / 0.18);
+  --desk:       228 231 223;
+  --desk-line:  rgb(29 42 34 / 0.1);
+  --sheet-shadow: 0 0 0 1px rgb(29 42 34 / 0.06), 0 1px 2px rgb(29 42 34 / 0.06), 0 10px 24px -16px rgb(29 42 34 / 0.28);
+  --font-display: var(--nf-heading);
+  --font-heading: var(--nf-heading);
+  font-synthesis: none;
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+}
+html.dark .studio {
+  --bg:         16 20 17;
+  --canvas:     19 24 20;
+  --surface:    22 28 24;
+  --surface-2:  28 35 30;
+  --surface-3:  36 45 39;
+  --ink:        231 235 227;
+  --ink-soft:   174 184 172;
+  --ink-faint:  138 149 137;
+  --primary:    196 222 201;
+  --on-primary: 16 20 17;
+  --accent:        143 199 160;
+  --accent-strong: 178 220 188;
+  --accent-soft:   rgb(143 199 160 / 0.12);
+  --accent-line:   rgb(143 199 160 / 0.32);
+  --line:       rgb(231 235 227 / 0.08);
+  --line-hover: rgb(231 235 227 / 0.16);
+  --desk:       11 14 12;
+  --desk-line:  rgb(231 235 227 / 0.07);
+  --sheet-shadow: 0 0 0 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 16px 36px -18px rgb(0 0 0 / 0.8);
+}
+.font-heading { font-family: var(--font-heading, var(--font-display)), Georgia, serif; font-weight: 400; }
+/* Instrument Serif is already tight: headings in the studio don't need negative tracking */
+.studio .t-page-title, .studio .t-heading, .studio .t-heading-sm, .studio .t-doc-title { font-weight: 400; letter-spacing: -0.005em; }
+.studio .t-page-title { font-size: 40px; line-height: 1.08; }
+.studio .t-heading { font-size: 25px; line-height: 1.15; }
+.studio .t-heading-sm { font-size: 20px; }
+/* Long reading text stays in the reading serif, not the display face */
+.studio .t-lead { font-family: var(--font-serif), Georgia, serif; }
+.studio ::selection { background: rgb(var(--accent) / 0.2); }

@@ -105,7 +105,7 @@ export function LandingPage() {
 
   const heroCopy = (
     <>
-      <h1 className="font-display text-[44px] font-semibold leading-[1.02] tracking-[-0.045em] text-ink sm:text-[64px] lg:text-[76px]">
+      <h1 className="font-display text-[44px] font-semibold leading-[1.02] tracking-[-0.022em] text-ink sm:text-[64px] lg:text-[76px]">
         Research you can
         <br />
         check, line by line.
@@ -150,7 +150,7 @@ export function LandingPage() {
         <div className="mx-auto flex h-16 max-w-[1320px] items-center justify-between px-5 sm:px-10">
           <Link href="/" className="flex items-center gap-2.5 text-ink" aria-label="CogNexa home">
             <BrandMark size={22} />
-            <span className="font-display text-[17px] font-semibold tracking-[-0.03em]">CogNexa</span>
+            <span className="font-display text-[17px] font-semibold tracking-[-0.015em]">CogNexa</span>
           </Link>
           <nav className="flex items-center gap-2">
             <button onClick={() => goToStep(0)} className="hidden h-10 rounded-[11px] px-3.5 text-[14px] text-ink-soft transition-colors hover:text-ink sm:block">
@@ -230,7 +230,7 @@ export function LandingPage() {
                         <div className="mono text-[13px] text-accent">
                           {String(i + 1).padStart(2, "0")} / 05
                         </div>
-                        <h2 className="mt-4 font-display text-[40px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink">{s.title}</h2>
+                        <h2 className="mt-4 font-display text-[40px] font-semibold leading-[1.05] tracking-[-0.02em] text-ink">{s.title}</h2>
                         <p className="mt-5 text-[17px] leading-relaxed text-ink-soft">{s.body}</p>
                       </div>
                     ))}
@@ -250,13 +250,13 @@ export function LandingPage() {
               </div>
             </section>
             <section id="how-it-works" aria-labelledby="steps-title" className="mx-auto max-w-[1320px] px-5 py-20 sm:px-10">
-              <h2 id="steps-title" className="font-display text-[34px] font-semibold tracking-[-0.04em] text-ink">How the agent works</h2>
+              <h2 id="steps-title" className="font-display text-[34px] font-semibold tracking-[-0.02em] text-ink">How the agent works</h2>
               <ol className="mt-10 grid gap-10">
                 {STEPS.map((s, i) => (
                   <li key={s.key} className="grid grid-cols-[44px_1fr] gap-4 border-t border-line pt-6">
                     <span className="mono text-[13px] text-accent">{String(i + 1).padStart(2, "0")}</span>
                     <div>
-                      <h3 className="font-display text-[22px] font-semibold tracking-[-0.03em] text-ink">{s.title}</h3>
+                      <h3 className="font-display text-[22px] font-semibold tracking-[-0.015em] text-ink">{s.title}</h3>
                       <p className="mt-2 text-[16px] leading-relaxed text-ink-soft">{s.body}</p>
                     </div>
                   </li>
@@ -268,7 +268,7 @@ export function LandingPage() {
 
         {/* ── The product ── */}
         <section aria-labelledby="modes-title" className="mx-auto max-w-[1320px] px-5 py-24 sm:px-10 sm:py-32">
-          <h2 id="modes-title" className="max-w-[18ch] font-display text-[36px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[52px]">
+          <h2 id="modes-title" className="max-w-[18ch] font-display text-[36px] font-semibold leading-[1.05] tracking-[-0.02em] text-ink sm:text-[52px]">
             One workspace for questions and papers.
           </h2>
 
@@ -298,7 +298,7 @@ export function LandingPage() {
         {/* ── Close ── */}
         <section aria-labelledby="close-title" className="border-t border-line">
           <div className="mx-auto flex max-w-[1320px] flex-col items-start gap-10 px-5 py-24 sm:px-10 sm:py-32 lg:flex-row lg:items-end lg:justify-between">
-            <h2 id="close-title" className="max-w-[14ch] font-display text-[44px] font-semibold leading-[1] tracking-[-0.045em] text-ink sm:text-[72px]">
+            <h2 id="close-title" className="max-w-[14ch] font-display text-[44px] font-semibold leading-[1] tracking-[-0.022em] text-ink sm:text-[72px]">
               Ask your first question.
             </h2>
             <Link
@@ -320,7 +320,7 @@ function Feature({ title, body, src, alt, flip }: { title: string; body: string;
   return (
     <div className={cn("grid items-center gap-10 lg:grid-cols-[minmax(0,380px)_1fr] lg:gap-16", flip && "lg:grid-cols-[1fr_minmax(0,380px)]")}>
       <div className={cn(flip && "lg:order-2")}>
-        <h3 className="font-display text-[28px] font-semibold tracking-[-0.035em] text-ink">{title}</h3>
+        <h3 className="font-display text-[28px] font-semibold tracking-[-0.018em] text-ink">{title}</h3>
         <p className="mt-4 text-[17px] leading-relaxed text-ink-soft">{body}</p>
       </div>
       <div className="group overflow-hidden rounded-[18px] border border-line bg-surface shadow-panel">

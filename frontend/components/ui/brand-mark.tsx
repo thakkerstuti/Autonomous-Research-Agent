@@ -16,7 +16,7 @@ export function BrandMark({ size = 20, className }: { size?: number; className?:
 
 export function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cn("text-[15px] font-semibold tracking-[-0.03em]", className)}>
+    <span className={cn("text-[15px] font-semibold tracking-[-0.015em]", className)}>
       CogNexa
     </span>
   );

@@ -131,11 +131,11 @@ export function AuthView({ mode: initialMode }: AuthViewProps) {
         <div className="relative z-10 flex flex-1 flex-col px-12 pb-0 pt-10 xl:px-16">
           <Link href="/" className="flex w-fit items-center gap-2.5 text-[#EFEDE6]" aria-label="CogNexa home">
             <BrandMark size={22} />
-            <span className="font-display text-[17px] font-semibold tracking-[-0.03em]">CogNexa</span>
+            <span className="font-display text-[17px] font-semibold tracking-[-0.015em]">CogNexa</span>
           </Link>
 
           <div className="mt-16 max-w-[520px] xl:mt-20">
-            <h2 className="font-display text-[46px] font-semibold leading-[1.04] tracking-[-0.045em] text-[#EFEDE6] xl:text-[54px]">
+            <h2 className="font-display text-[46px] font-semibold leading-[1.04] tracking-[-0.022em] text-[#EFEDE6] xl:text-[54px]">
               Research you can check, line by line.
             </h2>
             <ul className="mt-9 grid gap-4">
@@ -212,7 +212,7 @@ export function AuthView({ mode: initialMode }: AuthViewProps) {
         <header className="flex h-16 flex-shrink-0 items-center justify-between">
           <Link href="/" className="flex items-center gap-2 text-ink lg:invisible" aria-label="CogNexa home">
             <BrandMark size={20} />
-            <span className="font-display text-[16px] font-semibold tracking-[-0.03em]">CogNexa</span>
+            <span className="font-display text-[16px] font-semibold tracking-[-0.015em]">CogNexa</span>
           </Link>
           <div className="flex items-center gap-1">
             <Link href="/" className="rounded-lg px-2.5 py-1.5 text-[13.5px] text-ink-soft transition-colors hover:text-ink">
@@ -231,7 +231,7 @@ export function AuthView({ mode: initialMode }: AuthViewProps) {
         <div className="mx-auto flex w-full max-w-[380px] flex-1 flex-col justify-center py-10">
           <div className="animate-view-in">
           <div key={mode}>
-            <h1 className="font-display text-[30px] font-semibold leading-[1.1] tracking-[-0.035em] text-ink">
+            <h1 className="font-display text-[30px] font-semibold leading-[1.1] tracking-[-0.018em] text-ink">
               {mode === "login" ? "Welcome back" : "Create your account"}
             </h1>
             <p className="mt-2 text-[14.5px] text-ink-soft">

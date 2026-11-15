@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { IBM_Plex_Mono, IBM_Plex_Sans, Instrument_Serif, Newsreader } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { AppShell } from "@/components/layout/app-shell";
@@ -9,6 +10,18 @@ export const metadata: Metadata = {
     "A research workspace that searches, reads and cross-checks sources, and lets you study papers page by page.",
 };
 
+/*
+ * Type system, self-hosted at build time (no font requests to Google at runtime):
+ *   Newsreader      reading voice: document titles, headings, long-form summaries
+ *   IBM Plex Sans   working voice: interface, body text, controls
+ *   IBM Plex Mono   measurements: page numbers, counts, metadata
+ */
+const display = Newsreader({ subsets: ["latin"], axes: ["opsz"], style: ["normal", "italic"], variable: "--nf-display", display: "swap", adjustFontFallback: false });
+const sans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600"], style: ["normal", "italic"], variable: "--nf-sans", display: "swap" });
+/** Paper Study only: the condensed display serif of its headings */
+const heading = Instrument_Serif({ subsets: ["latin"], weight: "400", style: ["normal", "italic"], variable: "--nf-heading", display: "swap" });
+const mono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--nf-mono", display: "swap" });
+
 export const viewport: Viewport = {
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#E9EEE4" },
@@ -18,10 +31,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={`${display.variable} ${sans.variable} ${mono.variable} ${heading.variable}`}>
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <script
           dangerouslySetInnerHTML={{
             __html: `

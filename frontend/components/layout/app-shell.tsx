@@ -61,6 +61,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Protected pages render only for a verified session; the API enforces it too
   if (authStatus !== "authenticated") return <SessionCheck />;
 
+  // Paper Study is a focused reading space: its own top bar and palette, no app sidebar
+  if (pathname === "/paper-study") {
+    return (
+      <div key={pathname} className="studio page-enter h-[100dvh] overflow-hidden">
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-bg text-ink">
       <Sidebar />

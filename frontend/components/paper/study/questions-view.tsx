@@ -16,21 +16,29 @@ interface BankQuestion {
   pages: number[];
 }
 
-function QuestionItem({ q, onOpenPage }: { q: BankQuestion; onOpenPage: (p: number) => void }) {
+function QuestionItem({ q, n, onOpenPage }: { q: BankQuestion; n: number; onOpenPage: (p: number) => void }) {
   const [open, setOpen] = useState(false);
   return (
     <li className="border-b border-line">
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-start gap-3 py-3.5 text-left">
-        <span className="flex-1 text-[15px] leading-snug text-ink">{q.question}</span>
-        <span className="flex flex-shrink-0 items-center gap-1 pt-0.5 text-[12.5px] text-ink-faint">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="group grid w-full grid-cols-[30px_minmax(0,1fr)_auto] items-baseline gap-x-3 py-4 text-left"
+      >
+        <span className="t-meta">{String(n).padStart(2, "0")}</span>
+        <span className="text-[15.5px] font-medium leading-[1.5] text-ink transition-colors group-hover:text-accent">{q.question}</span>
+        <span className="flex items-center gap-1 text-[12.5px] text-ink-faint transition-colors group-hover:text-ink">
           {open ? "Hide" : "Answer"}
           <ChevronDown size={14} className={cn("transition-transform duration-200", open && "rotate-180")} />
         </span>
       </button>
       {open && (
-        <div className="animate-view-in pb-5 pr-6">
-          <div className="report-prose chat-prose"><ReactMarkdown>{q.answer}</ReactMarkdown></div>
-          <PageRefs pages={q.pages} onOpenPage={onOpenPage} className="mt-2" />
+        <div className="animate-view-in grid grid-cols-[30px_minmax(0,1fr)] gap-x-3 pb-6">
+          <div className="col-start-2 max-w-[68ch]">
+            <div className="report-prose !text-[16.5px]"><ReactMarkdown>{q.answer}</ReactMarkdown></div>
+            <PageRefs pages={q.pages} onOpenPage={onOpenPage} className="-ml-1 mt-2" />
+          </div>
         </div>
       )}
     </li>
@@ -44,28 +52,40 @@ function Bank({ paperId, version, onOpenPage }: { paperId: string; version: stri
   const groups = groupByCategory(q.data.content.questions, QUESTION_CATEGORIES);
   if (!groups.length) return <EmptyOutput text="No questions could be made from this paper." />;
   const shown = filter === "all" ? groups : groups.filter((g) => g.key === filter);
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  let n = 0;
 
   return (
-    <div className="animate-view-in">
-      <div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 text-[13px]" role="radiogroup" aria-label="Question type">
-        {[{ key: "all", label: "All" }, ...groups.map((g) => ({ key: g.key, label: g.label }))].map((o) => (
-          <button
-            key={o.key}
-            role="radio"
-            aria-checked={filter === o.key}
-            onClick={() => setFilter(o.key)}
-            className={cn("pressable border-b pb-1 transition-colors", filter === o.key ? "border-accent font-medium text-ink" : "border-transparent text-ink-soft hover:text-ink")}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-      <div className="mt-6 grid gap-9">
-        {shown.map((g) => (
-          <section key={g.key} aria-label={g.label}>
-            <h2 className="col-label">{g.label}</h2>
-            <ul className="mt-2 border-t border-line">
-              {g.items.map((item) => <QuestionItem key={item.id} q={item} onOpenPage={onOpenPage} />)}
+    <div className="split-index">
+      <nav aria-label="Question type" className="split-side min-w-0">
+        <div role="radiogroup" aria-label="Question type" className="index-list -mx-1 flex flex-wrap gap-1">
+          {[{ key: "all", label: "All questions", count: total }, ...groups.map((g) => ({ key: g.key, label: g.label, count: g.items.length }))].map((o) => (
+            <button
+              key={o.key}
+              role="radio"
+              aria-checked={filter === o.key}
+              onClick={() => setFilter(o.key)}
+              className={cn(
+                "flex flex-shrink-0 items-baseline justify-between gap-3 whitespace-nowrap rounded-[6px] px-2.5 py-1.5 text-left text-[13.5px] transition-colors",
+                filter === o.key ? "bg-ink/[0.06] font-medium text-ink" : "text-ink-soft hover:bg-ink/[0.03] hover:text-ink"
+              )}
+            >
+              {o.label}
+              <span className="t-meta">{o.count}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      <div className="min-w-0">
+        {shown.map((g, gi) => (
+          <section key={g.key} aria-label={g.label} className={gi > 0 ? "mt-12" : ""}>
+            <div className="flex items-baseline justify-between gap-4">
+              <h2 className="t-heading">{g.label}</h2>
+              <span className="t-meta">{g.items.length} question{g.items.length > 1 ? "s" : ""}</span>
+            </div>
+            <ul className="mt-3 border-t border-line">
+              {g.items.map((item) => <QuestionItem key={item.id} q={item} n={++n} onOpenPage={onOpenPage} />)}
             </ul>
           </section>
         ))}
@@ -76,7 +96,7 @@ function Bank({ paperId, version, onOpenPage }: { paperId: string; version: stri
 
 export function QuestionsView({ paperId, onOpenPage }: { paperId: string; onOpenPage: (p: number) => void }) {
   return (
-    <SectionShell title="Questions" meta="From basic understanding to critical thinking. Reveal each answer when you're ready.">
+    <SectionShell title="Questions" meta="From basic understanding to critical thinking. Try each one, then reveal the answer and the page it comes from.">
       <KitGate paperId={paperId} kind="questions" title="Questions">
         {({ version }) => <Bank paperId={paperId} version={version} onOpenPage={onOpenPage} />}
       </KitGate>
