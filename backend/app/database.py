@@ -2,13 +2,14 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy import event
+from app.db_url import engine_options, get_database_url
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB_PATH = os.path.join(BASE_DIR, "cognexa.db")
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
+SQLALCHEMY_DATABASE_URL = get_database_url()  # DATABASE_URL, or the local SQLite file
 
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    SQLALCHEMY_DATABASE_URL, **engine_options(SQLALCHEMY_DATABASE_URL)
 )
 
 if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
