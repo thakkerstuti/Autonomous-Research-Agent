@@ -3,12 +3,12 @@ import asyncio
 import json
 
 import fitz  # PyMuPDF
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 import app.models as models
-from app import study, tasks
+from app import storage, study, tasks
 from app.auth.deps import get_current_user
 from app.database import get_db
 from app.log import get_logger
@@ -127,31 +127,61 @@ def upload_paper(
     text_pages = sum(1 for _, _, st in extracted if st == "ready")
     no_text = sum(1 for _, _, st in extracted if st == "no_text")
 
+    # The original PDF goes to Supabase Storage BEFORE the paper is recorded, so a
+    # failed upload never leaves a paper whose file is missing. Production never
+    # falls back to the server's own disk, which is wiped on restart.
+    paper_id = models.generate_uuid()
+    storage_path = None
+    if storage.is_configured():
+        storage_path = storage.object_path(user.id, paper_id)
+        try:
+            storage.upload_pdf(storage_path, data)
+        except storage.StorageError as exc:
+            log.warning("file store failed user=%s bytes=%d error=%s", user.id[:8], size, exc)
+            raise HTTPException(status_code=503, detail="The PDF couldn't be stored right now, so nothing was saved. Please try again.")
+    elif not storage.local_files_allowed():
+        log.error("upload refused: file storage is not configured in production")
+        raise HTTPException(status_code=503, detail="File storage isn't configured on the server, so uploads are paused.")
+
     # One short write: the paper, its pages and the pending explanations together
     paper = models.Paper(
+        id=paper_id,
         user_id=user.id,
         title=name[:255],
         page_count=page_count,
         file_size=size,
         level=level,
         status="ready" if text_pages else "needs_ocr",
+        storage_path=storage_path,
     )
-    db.add(paper)
-    db.flush()
-    for number, text, st in extracted:
-        db.add(models.PaperPage(paper_id=paper.id, page_number=number, text=text, status=st))
-    db.commit()
-
-    path = os.path.join(UPLOAD_DIR, f"{paper.id}.pdf")
     try:
-        with open(path, "wb") as f:
-            f.write(data)
-    except OSError as exc:  # the text is already saved; only the original file is affected
-        log.warning("file save failed paper=%s error=%s", paper.id, type(exc).__name__)
+        db.add(paper)
+        db.flush()
+        for number, text, st in extracted:
+            db.add(models.PaperPage(paper_id=paper.id, page_number=number, text=text, status=st))
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        if storage_path:
+            # Only the object this request just created (uploads never overwrite)
+            try:
+                storage.remove_object(storage_path)
+            except storage.StorageError as cleanup:
+                log.error("orphan file left paper=%s cleanup_error=%s", paper_id, cleanup)
+        log.error("upload not saved user=%s error=%s", user.id[:8], type(exc).__name__)
+        raise HTTPException(status_code=500, detail="The paper couldn't be saved, so nothing was kept. Please try again.")
+
+    if storage_path is None:  # development without Storage configured: the local folder, as before
+        path = os.path.join(UPLOAD_DIR, f"{paper.id}.pdf")
         try:
-            os.remove(path)  # never leave a partial file behind
-        except OSError:
-            pass
+            with open(path, "wb") as f:
+                f.write(data)
+        except OSError as exc:  # the text is already saved; only the original file is affected
+            log.warning("file save failed paper=%s error=%s", paper.id, type(exc).__name__)
+            try:
+                os.remove(path)  # never leave a partial file behind
+            except OSError:
+                pass
 
     log.info(
         "upload ok paper=%s user=%s bytes=%d pages=%d text_pages=%d no_text=%d image_only=%d extract_failed=%d level=%s",
@@ -173,12 +203,48 @@ def upload_paper(
     }
 
 
+NOT_STORED = "The original PDF for this paper isn't stored anymore. Upload it again to see its pages; its text and study material are still here."
+
+
+def _pdf_response(data: bytes, range_header: str | None) -> Response:
+    """The PDF, whole or one requested byte range (HTTP Range, single range)."""
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, no-store"}
+    total = len(data)
+    if range_header and range_header.startswith("bytes=") and "," not in range_header:
+        start_s, _, end_s = range_header[6:].strip().partition("-")
+        try:
+            if start_s:
+                start = int(start_s)
+                end = min(int(end_s), total - 1) if end_s else total - 1
+            else:  # suffix range: the last N bytes
+                start, end = max(total - int(end_s), 0), total - 1
+        except ValueError:
+            start, end = -1, -1
+        if start < 0 or start > end or start >= total:
+            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{total}"})
+        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+        return Response(data[start:end + 1], status_code=206, media_type="application/pdf", headers=headers)
+    return Response(data, media_type="application/pdf", headers=headers)
+
+
 @router.get("/{paper_id}/file")
-def get_paper_file(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    paper_id = _owned_paper(db, paper_id, user).id
-    file_path = os.path.join(UPLOAD_DIR, f"{paper_id}.pdf")
+def get_paper_file(paper_id: str, request: Request, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    paper = _owned_paper(db, paper_id, user)  # ownership first: someone else's paper is "not found"
+    if paper.storage_path:
+        try:
+            data = storage.download_pdf(paper.storage_path)
+        except storage.StorageNotFound:
+            log.warning("stored file missing paper=%s", paper.id)
+            raise HTTPException(status_code=404, detail=NOT_STORED)
+        except storage.StorageError as exc:
+            log.warning("file load failed paper=%s error=%s", paper.id, exc)
+            raise HTTPException(status_code=502, detail="The PDF couldn't be loaded from storage right now. Please try again.")
+        return _pdf_response(data, request.headers.get("range"))
+
+    # Papers from before Storage: the local file, if this server still has it
+    file_path = os.path.join(UPLOAD_DIR, f"{paper.id}.pdf")
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail=NOT_STORED)
     return FileResponse(file_path, media_type="application/pdf")
 
 

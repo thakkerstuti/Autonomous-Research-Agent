@@ -25,7 +25,8 @@ from app.db_url import engine_options, normalise_database_url
 from app.models import Base
 
 BACKEND = Path(__file__).resolve().parent.parent
-HEAD = "e7de0666b0a1"
+HEAD = "4b1d2f9c8a73"      # latest revision
+BASELINE = "e7de0666b0a1"  # the revision that creates every table
 APP_TABLES = {
     "users", "oauth_accounts", "refresh_tokens", "auth_tokens",
     "papers", "paper_pages", "page_summaries", "study_artifacts", "research_sessions",
@@ -115,7 +116,7 @@ def test_downgrade_never_drops_tables(tmp_path):
 
 
 def test_baseline_defines_every_model_table():
-    source = (BACKEND / "alembic" / "versions" / f"{HEAD}_baseline_schema.py").read_text(encoding="utf-8")
+    source = (BACKEND / "alembic" / "versions" / f"{BASELINE}_baseline_schema.py").read_text(encoding="utf-8")
     created = set(re.findall(r"op\.create_table\('([a-z_]+)'", source))
     assert created == set(Base.metadata.tables) == APP_TABLES
 
@@ -136,6 +137,7 @@ def test_postgresql_sql_creates_every_table_and_enables_row_level_security(tmp_p
         assert f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY' in sql, table
     assert "CREATE UNIQUE INDEX ix_users_email ON users (email)" in sql
     assert "FOREIGN KEY(paper_id) REFERENCES papers (id) ON DELETE CASCADE" in sql
+    assert "ALTER TABLE papers ADD COLUMN storage_path VARCHAR(512)" in sql
     assert "TopSecretPw42" not in sql and "someuser" not in sql and "db.invalid" not in sql  # no credentials in the output
     assert f"'{HEAD}'" in sql
 

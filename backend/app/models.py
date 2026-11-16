@@ -17,6 +17,7 @@ class Paper(Base):
     status = Column(String, default="queued")
     overview = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    storage_path = Column(String(512), nullable=True)  # original PDF in Supabase Storage; null = local file or not stored
 
 class PaperPage(Base):
     __tablename__ = "paper_pages"
