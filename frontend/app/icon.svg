@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 64 64">
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .back { stroke: #C4DEC9; }
+      .front { fill: #E7EBE3; }
+      .lines { stroke: #101411; }
+    }
+  </style>
+  <rect class="back" x="12" y="8" width="30" height="40" rx="4" fill="none" stroke="#234D38" stroke-width="5"/>
+  <rect class="front" x="22" y="16" width="30" height="40" rx="4" fill="#234D38"/>
+  <path class="lines" d="M28 30h18M28 40h12" fill="none" stroke="#F7F7F2" stroke-width="4" stroke-linecap="round"/>
+</svg>

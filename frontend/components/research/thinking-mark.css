@@ -1,0 +1,41 @@
+/* ThinkingMark (the assistant's Folio mark) while CogNexa works.
+   Resting state is the complete mark, so with reduced motion (animations shortened to one
+   instant run by the global rule) it simply stays still. */
+
+/* 16 px and up: the front page's lines write themselves in, then the point lands in the accent colour */
+.fm-active .fm-line {
+  stroke-dasharray: 20;
+  animation: fmWrite 2.4s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+.fm-active .fm-line-2 { animation-name: fmWrite2; }
+.fm-active .fm-point { animation: fmPoint 2.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+
+/* opacity is pinned at 1 until the pass ends; only then does the page clear for the next pass */
+@keyframes fmWrite {
+  0% { stroke-dashoffset: 20; opacity: 1; }
+  28%, 86% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+@keyframes fmWrite2 {
+  0%, 24% { stroke-dashoffset: 20; opacity: 1; }
+  50%, 86% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+@keyframes fmPoint {
+  0%, 52% { opacity: 0; transform: scale(0.4); }
+  62% { opacity: 1; transform: scale(1.15); }
+  70%, 86% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
+/* Below 16 px (spinners in buttons): the front page lifts and settles, a page being turned */
+.fm-active .fm-front { animation: fmTurn 1.3s ease-in-out infinite; }
+.fm-active .fm-back { animation: fmBack 1.3s ease-in-out infinite; }
+@keyframes fmTurn {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-3px, -4px); }
+}
+@keyframes fmBack {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
