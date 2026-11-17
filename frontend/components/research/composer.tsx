@@ -5,10 +5,10 @@ import { ArrowUp, Loader2 } from "lucide-react";
 import { OutputFormat } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const FORMATS: { value: OutputFormat; label: string; hint: string }[] = [
-  { value: "quick", label: "Quick", hint: "A short, direct answer" },
-  { value: "detailed", label: "Detailed", hint: "A fuller explanation" },
-  { value: "full", label: "Full report", hint: "A complete cited report" },
+const FORMATS: { value: OutputFormat; label: string; short: string; hint: string }[] = [
+  { value: "quick", label: "Quick answer", short: "Quick", hint: "A concise, direct answer with its key evidence and citations" },
+  { value: "detailed", label: "Detailed analysis", short: "Detailed", hint: "An in-depth answer: findings, comparisons, conflicting evidence and implications" },
+  { value: "full", label: "Research paper", short: "Paper", hint: "A thorough investigation written up as an editable, structured research paper (PDF export)" },
 ];
 
 /** Segmented control whose indicator slides to the selection. */
@@ -25,12 +25,17 @@ export function DepthSelector({
   const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
 
   useLayoutEffect(() => {
-    const el = refs.current[value];
-    if (el) setPill({ x: el.offsetLeft, w: el.offsetWidth });
+    const measure = () => {
+      const el = refs.current[value];
+      if (el) setPill({ x: el.offsetLeft, w: el.offsetWidth });
+    };
+    measure();
+    window.addEventListener("resize", measure); // labels shorten on narrow screens
+    return () => window.removeEventListener("resize", measure);
   }, [value]);
 
   return (
-    <div role="radiogroup" aria-label="Answer depth" className="relative inline-flex items-center rounded-[10px] bg-ink/[0.05] p-[3px]">
+    <div role="radiogroup" aria-label="Output type" className="relative inline-flex items-center rounded-[10px] bg-ink/[0.05] p-[3px]">
       {pill && (
         <span
           aria-hidden
@@ -46,6 +51,7 @@ export function DepthSelector({
           role="radio"
           aria-checked={value === f.value}
           title={f.hint}
+          aria-label={f.label}
           disabled={disabled}
           onClick={() => onChange(f.value)}
           className={cn(
@@ -53,7 +59,8 @@ export function DepthSelector({
             value === f.value ? "text-ink" : "text-ink-faint hover:text-ink"
           )}
         >
-          {f.label}
+          <span className="sm:hidden">{f.short}</span>
+          <span className="hidden sm:inline">{f.label}</span>
         </button>
       ))}
     </div>

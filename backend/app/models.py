@@ -60,6 +60,37 @@ class ResearchSession(Base):
     stats = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    thread_id = Column(String(36), index=True, nullable=True)  # conversation this question belongs to; null = its own thread
+    progress = Column(JSON, nullable=True)  # user-facing working flow (high-level stages only)
+
+
+class ResearchDocument(Base):
+    """The full research paper written from one research session."""
+    __tablename__ = "research_documents"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    session_id = Column(String, ForeignKey("research_sessions.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    title = Column(String(500), nullable=True)
+    status = Column(String(16), nullable=False, default="generating")  # generating, ready, failed
+    error = Column(Text, nullable=True)
+    current_version = Column(Integer, nullable=False, default=0)
+    edited = Column(Boolean, nullable=False, default=False)
+    pdf_path = Column(String(512), nullable=True)  # private Supabase Storage object of pdf_version
+    pdf_version = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class ResearchDocumentVersion(Base):
+    """Every saved state of a paper: version 1 is the generated original, later ones are the user's saves."""
+    __tablename__ = "research_document_versions"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    document_id = Column(String, ForeignKey("research_documents.id", ondelete="CASCADE"), index=True, nullable=False)
+    version = Column(Integer, nullable=False)
+    source = Column(String(16), nullable=False)  # generated, edit
+    content = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("document_id", "version", name="uix_research_document_version"),)
 
 
 

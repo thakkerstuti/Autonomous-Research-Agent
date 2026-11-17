@@ -197,12 +197,25 @@ def run_research(
     session_id: str | None = None,
     db=None,
     user_id: str | None = None,
+    on_stage=None,
+    max_rounds: int | None = None,
 ) -> dict:
+    """on_stage (optional) is told which high-level stage the run has reached;
+    max_rounds (optional) caps the search rounds. Without them nothing changes."""
     start_time = time.time()
     gemini_calls = 0
     tavily_calls = 0
     partial_errors: list[str] = []
+    rounds_limit = max(1, min(int(max_rounds), MAX_ROUNDS)) if max_rounds else MAX_ROUNDS
 
+    def stage(name: str) -> None:
+        if on_stage:
+            try:
+                on_stage(name)
+            except Exception:
+                pass  # progress reporting never affects the research itself
+
+    stage("understanding")
     plan = create_research_plan(question)
     gemini_calls += 1
 
@@ -229,9 +242,10 @@ def run_research(
     evidence_log: list[dict] = []
     rounds_used = 0
 
-    for r in range(1, MAX_ROUNDS + 1):
+    for r in range(1, rounds_limit + 1):
         rounds_used = r
         round_sources: list[dict] = []
+        stage("discovering" if r == 1 else "gathering")
 
         # Step 2: SEARCH (Tavily only, max_results=4)
         for h_id, queries in pending_queries.items():
@@ -265,6 +279,7 @@ def run_research(
                     })
 
         # Step 3: CLASSIFY + REFINE (1 Gemini call)
+        stage("gathering")
         try:
             classification = classify_and_refine(hypotheses, round_sources, used_queries)
             gemini_calls += 1
@@ -312,7 +327,7 @@ def run_research(
             )
 
         # Step 5: Check if refinement is needed for another round
-        if r == MAX_ROUNDS:
+        if r == rounds_limit:
             break
 
         if r >= 2 and not any(e["round"] == r and e["stance"] in ("supports", "refutes") for e in evidence_log):
@@ -337,6 +352,7 @@ def run_research(
         pending_queries = next_pending
 
     # Assign evidence IDs, timestamps, source types, and verification
+    stage("evaluating")
     retrieved_at = datetime.now(timezone.utc).isoformat()
     for i, ev in enumerate(evidence_log):
         ev["id"] = f"E{i + 1}"
@@ -349,6 +365,7 @@ def run_research(
         ev["verification_detail"] = v_detail
 
     # Recompute hypothesis statuses and evaluate contradictions (Priority 3)
+    stage("comparing")
     for h in hypotheses:
         h_evs = [e for e in evidence_log if e["hypothesis_id"] == h["id"]]
         valid_h_evs = [
@@ -419,6 +436,7 @@ def run_research(
         }
 
     # Write report with requested format (Priority 4)
+    stage("preparing")
     report, invalid_citations, report_error = write_report(
         question, hypotheses, evidence_log, output_format=output_format
     )

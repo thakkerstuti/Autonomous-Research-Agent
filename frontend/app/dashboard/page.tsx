@@ -7,11 +7,11 @@ import {
   ArrowRight, ArrowUpRight, ArrowUp, BookOpen, FileText, Plus, Search, Upload, AlertTriangle,
 } from "lucide-react";
 import {
-  usePapersQuery, useSessionsQuery, useReportQuery, usePaperPagesQueries, useSessionDetailQueries,
+  usePapersQuery, useSessionsQuery, useThreadsQuery, usePaperPagesQueries, useSessionDetailQueries,
 } from "@/lib/queries";
 import { modeHref } from "@/lib/nav";
 import { paperStatus, sessionStatus } from "@/lib/status";
-import { STATUS_TONE } from "@/lib/research-view";
+import { MODE_LABEL } from "@/lib/research-runs";
 import { Badge } from "@/components/ui/badge";
 import { ProgressRing, PageStrip } from "@/components/viz/progress";
 import { PaperItem, SessionSummary } from "@/lib/types";
@@ -38,11 +38,6 @@ function dayLabel(t: number) {
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
-}
-
-function parseFinding(text: string) {
-  const m = text.match(/^\[([A-Z_]+)\]\s*(.*)$/);
-  return m ? { status: m[1].toLowerCase(), text: m[2] } : { status: "untested", text };
 }
 
 /* ─────────────────────────── small parts ─────────────────────────── */
@@ -93,7 +88,10 @@ export default function DashboardPage() {
   const router = useRouter();
   const { data: sessions, isLoading: sLoading } = useSessionsQuery();
   const { data: papers, isLoading: pLoading } = usePapersQuery();
-  const { data: report, isLoading: rLoading } = useReportQuery();
+  const { data: threads, isLoading: rLoading } = useThreadsQuery();
+  // Research papers belong to their conversations (there is no separate report page)
+  const paperThreads = useMemo(() => (threads ?? []).filter((t) => t.has_paper && t.document_id), [threads]);
+  const latestPaper = paperThreads[0];
 
   const sessionList: SessionSummary[] = sessions ?? [];
   const paperList: PaperItem[] = papers ?? [];
@@ -135,8 +133,6 @@ export default function DashboardPage() {
     });
     return { ready, total, covered: pagesById.size };
   }, [pagesById]);
-
-  const findings = useMemo(() => (report?.findings ?? []).map((f) => ({ ...f, ...parseFinding(f.text) })), [report]);
 
   /* ── narrative headline ── */
   const headline = empty
@@ -187,7 +183,15 @@ export default function DashboardPage() {
         href: "/library",
       })
     );
-    if (report) ev.push({ t: toTime(report.updated), kind: "report", title: report.question, detail: "Report generated", href: "/report" });
+    paperThreads.slice(0, 3).forEach((t) =>
+      ev.push({
+        t: toTime(t.paper_saved_at ?? t.updated_at ?? undefined),
+        kind: "report",
+        title: t.title,
+        detail: t.paper_edited ? "Research paper edited" : "Research paper written",
+        href: `/research/paper/${t.document_id}`,
+      })
+    );
     const sorted = ev.sort((a, b) => b.t - a.t).slice(0, 9);
     const groups: { label: string; items: typeof sorted }[] = [];
     sorted.forEach((e) => {
@@ -197,13 +201,13 @@ export default function DashboardPage() {
       else groups.push({ label, items: [e] });
     });
     return groups;
-  }, [sessionList, paperList, report]);
+  }, [sessionList, paperList, paperThreads]);
 
   /* ── next steps (rules over real state) ── */
   const steps = useMemo(() => {
     const out: { title: string; why: string; href: string; tone?: "warn" }[] = [];
     sessionList.filter((s) => s.status === "review").slice(0, 2).forEach((s) =>
-      out.push({ title: `Review “${s.title}”`, why: "The agent flagged this investigation for review.", href: modeHref(s.mode, s.id), tone: "warn" })
+      out.push({ title: `Review “${s.title}”`, why: "Some statements rest on limited evidence; check the cited sources.", href: modeHref(s.mode, s.id), tone: "warn" })
     );
     paperList.filter((p) => p.status === "failed").slice(0, 1).forEach((p) =>
       out.push({ title: `Re-upload “${p.title}”`, why: "Processing failed for this paper.", href: "/library", tone: "warn" })
@@ -211,11 +215,11 @@ export default function DashboardPage() {
     paperList.filter((p) => p.status === "ready").slice(0, 1).forEach((p) =>
       out.push({ title: `Study “${p.title}”`, why: "It is summarised and ready for the canvas.", href: `/paper-study?paperId=${encodeURIComponent(p.id)}` })
     );
-    if (report) out.push({ title: "Read the latest report", why: `${report.findings.length} ${plural(report.findings.length, "finding")} on “${report.question}”.`, href: "/report" });
-    if (!sessionList.length) out.push({ title: "Ask your first research question", why: "The agent plans hypotheses, searches and verifies sources.", href: "/research" });
+    if (latestPaper) out.push({ title: latestPaper.paper_edited ? "Continue editing your research paper" : "Read your latest research paper", why: `“${latestPaper.title}”`, href: `/research/paper/${latestPaper.document_id}` });
+    if (!sessionList.length) out.push({ title: "Ask your first research question", why: "CogNexa finds and checks sources, then answers or writes a full paper.", href: "/research" });
     if (!paperList.length) out.push({ title: "Bring a paper to study", why: "Upload a PDF and read it page by page.", href: "/paper-study" });
     return out.slice(0, 4);
-  }, [sessionList, paperList, report]);
+  }, [sessionList, paperList, latestPaper]);
 
   const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
@@ -286,11 +290,15 @@ export default function DashboardPage() {
             muted={!pageTotals.total}
           />
           <LedgerCell
-            label="Latest report"
-            value={report ? String(report.findings.length) : "—"}
-            note={report ? `${plural(report.findings.length, "finding")} · ${report.citations.length} ${plural(report.citations.length, "citation")}` : "No report yet"}
+            label="Research papers"
+            value={paperThreads.length ? String(paperThreads.length) : "—"}
+            note={
+              paperThreads.length
+                ? `${paperThreads.filter((t) => t.paper_edited).length} edited · open them from History`
+                : "None written yet"
+            }
             loading={rLoading}
-            muted={!report}
+            muted={!paperThreads.length}
           />
         </section>
 
@@ -370,19 +378,15 @@ export default function DashboardPage() {
                 {sessionList.length > 0 && (
                   <div>
                     <div className="col-label mb-3 grid grid-cols-[1fr_auto] gap-4 border-b border-line pb-2">
-                      <span>Investigations · hypotheses tested</span>
+                      <span>Investigations</span>
                       <span>Evidence</span>
                     </div>
                     <ul>
                       {sessionList.slice(0, 4).map((s) => {
                         const d = detailById.get(s.id);
-                        const hyps: any[] = d?.hypotheses ?? [];
                         const evidence: number | null = d ? (d.evidence_log ?? []).length : null;
-                        const counts = hyps.reduce<Record<string, number>>((acc, h) => {
-                          const k = String(h.status ?? "untested");
-                          acc[k] = (acc[k] ?? 0) + 1;
-                          return acc;
-                        }, {});
+                        const sources = d ? new Set((d.evidence_log ?? []).map((e: any) => e.source_url)).size : 0;
+                        const mode = (d?.output_format ?? s.output_format) as keyof typeof MODE_LABEL | undefined;
                         return (
                           <li key={s.id}>
                             <Link href={modeHref(s.mode, s.id)} className="group grid grid-cols-[1fr_auto] items-center gap-x-6 border-b border-line py-4">
@@ -394,17 +398,12 @@ export default function DashboardPage() {
                                 <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
                                   {!d && detailQueries.length > 0 ? (
                                     <Skeleton className="h-3 w-40" />
-                                  ) : hyps.length ? (
-                                    <>
-                                      <span className="flex items-center gap-1.5" aria-hidden>
-                                        {hyps.map((h, i) => (
-                                          <span key={i} className={cn("h-2 w-2 rounded-full", STATUS_TONE[h.status]?.dot ?? "bg-ink-faint")} />
-                                        ))}
-                                      </span>
-                                      <span className="text-meta text-ink-soft">
-                                        {Object.entries(counts).map(([k, n]) => `${n} ${STATUS_TONE[k]?.label.toLowerCase() ?? k}`).join(" · ")}
-                                      </span>
-                                    </>
+                                  ) : d ? (
+                                    <span className="text-meta text-ink-soft">
+                                      {[mode && MODE_LABEL[mode], sources ? `${sources} ${plural(sources, "source")}` : null,
+                                        s.has_paper ? (s.paper_edited ? "paper edited" : "paper written") : null]
+                                        .filter(Boolean).join(" · ") || `Updated ${s.updated}`}
+                                    </span>
                                   ) : (
                                     <span className="text-meta text-ink-faint">Updated {s.updated}</span>
                                   )}
@@ -470,28 +469,21 @@ export default function DashboardPage() {
                       </ProgressRing>
                       <p className="text-[13.5px] leading-snug text-ink-soft">
                         <span className="font-medium text-ink">Investigations completed.</span>{" "}
-                        {sReady === sessionList.length ? "Every thread has a finished report." : `${sessionList.length - sReady} still open.`}
+                        {sReady === sessionList.length ? "Every investigation has finished." : `${sessionList.length - sReady} still open.`}
                       </p>
                     </div>
                   )}
-                  {findings.length > 0 && (
-                    <div>
-                      <p className="text-[13.5px] text-ink-soft">
-                        <span className="font-medium text-ink">Latest verdicts.</span> How the hypotheses in “{report?.question}” held up.
+                  {latestPaper && (
+                    <Link href={`/research/paper/${latestPaper.document_id}`} className="group flex items-start gap-3">
+                      <FileText size={18} strokeWidth={1.75} className="mt-0.5 flex-shrink-0 text-ink-faint" />
+                      <p className="text-[13.5px] leading-snug text-ink-soft">
+                        <span className="font-medium text-ink">Latest research paper.</span>{" "}
+                        <span className="transition-colors group-hover:text-accent">“{latestPaper.title}”</span>
+                        {latestPaper.paper_edited ? " · edited" : ""}
                       </p>
-                      <ul className="mt-3 grid gap-2">
-                        {findings.slice(0, 4).map((f) => (
-                          <li key={f.id} className="flex items-start gap-2.5 text-meta">
-                            <span className={cn("mt-[5px] h-2 w-2 flex-shrink-0 rounded-full", STATUS_TONE[f.status]?.dot ?? "bg-ink-faint")} />
-                            <span className="min-w-0 flex-1 text-ink-soft">
-                              <span className={cn("font-medium", STATUS_TONE[f.status]?.cls)}>{STATUS_TONE[f.status]?.label ?? f.status}</span> — {f.text}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    </Link>
                   )}
-                  {!pageTotals.total && !sessionList.length && !findings.length && (
+                  {!pageTotals.total && !sessionList.length && !latestPaper && (
                     <p className="text-meta text-ink-faint">Insights appear once papers are summarised or investigations finish.</p>
                   )}
                 </div>
@@ -553,15 +545,16 @@ function resumeMeta(item: ResumeItem, pages?: { status: string }[], detail?: any
       action: "Open study canvas",
     };
   }
-  const hyps: any[] = detail?.hypotheses ?? [];
-  const tested = hyps.filter((h) => h.status && h.status !== "untested").length;
+  const sources = detail ? new Set((detail.evidence_log ?? []).map((e: any) => e.source_url)).size : 0;
+  const mode = (detail?.output_format ?? item.s.output_format) as keyof typeof MODE_LABEL | undefined;
   return {
     type: "Investigation",
     icon: Search,
     title: item.s.title,
     status: <Badge variant={sessionStatus[item.s.status].variant}>{sessionStatus[item.s.status].label}</Badge>,
-    progress: hyps.length ? tested / hyps.length : null,
-    progressLabel: hyps.length ? `${tested} of ${hyps.length} hypotheses resolved` : `Updated ${item.s.updated}`,
+    progress: item.s.status === "in_progress" ? null : 1,
+    progressLabel: [mode && MODE_LABEL[mode], sources ? `${sources} ${sources === 1 ? "source" : "sources"}` : null, `updated ${item.s.updated}`]
+      .filter(Boolean).join(" · "),
     href: modeHref(item.s.mode, item.s.id),
     action: "Resume thread",
   };
@@ -641,7 +634,7 @@ function EmptyDesk({ onAsk }: { onAsk: (q: string) => void }) {
         <div className="relative z-10 p-7 sm:p-9">
           <h2 className="font-display text-title font-semibold text-[#EFEDE6]">Put the agent to work</h2>
           <p className="mt-2 max-w-[48ch] text-body text-[#C3CBBC]">
-            It plans hypotheses, searches the literature, checks every quote against its source and writes a cited report.
+            It searches the literature, checks every quote against its source, and answers quickly, in depth, or as a full research paper you can edit.
           </p>
           <form
             onSubmit={(e) => {
@@ -683,7 +676,7 @@ function EmptyDesk({ onAsk }: { onAsk: (q: string) => void }) {
           <div className="col-label mb-3">What builds up here</div>
           <ul className="grid gap-2.5 text-meta text-ink-soft">
             <li className="flex gap-2.5"><FileText size={14} className="mt-0.5 flex-shrink-0 text-ink-faint" /> Reading progress for every paper, page by page</li>
-            <li className="flex gap-2.5"><Search size={14} className="mt-0.5 flex-shrink-0 text-ink-faint" /> Which hypotheses held up, with evidence counts</li>
+            <li className="flex gap-2.5"><Search size={14} className="mt-0.5 flex-shrink-0 text-ink-faint" /> Your investigations and the research papers written from them</li>
             <li className="flex gap-2.5"><ArrowRight size={14} className="mt-0.5 flex-shrink-0 text-ink-faint" /> A timeline of activity and what to do next</li>
           </ul>
         </div>

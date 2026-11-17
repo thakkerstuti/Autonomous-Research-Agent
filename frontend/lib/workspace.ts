@@ -29,7 +29,12 @@ export interface Workspace {
     companion?: string;
     rail?: boolean;
   } | null;
-  research?: { sessionIds: string[]; pending?: PendingResearch | null } | null;
+  /**
+   * threadId: the open research conversation (its turns live on the server).
+   * sessionIds/pending: the older format, still read once to reopen a thread.
+   * format: the output type the user last chose.
+   */
+  research?: { threadId?: string | null; format?: string; sessionIds?: string[]; pending?: PendingResearch | null } | null;
 }
 
 const PREFIX = "cognexa-workspace:";

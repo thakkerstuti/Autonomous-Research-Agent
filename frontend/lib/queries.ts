@@ -44,6 +44,14 @@ async function fetchUsage(): Promise<UsageMeter[]> {
 
 
 export const useSessionsQuery = () => useQuery({ queryKey: ["sessions"], queryFn: fetchSessions, staleTime: 30_000 });
+/** Research conversations with their output mode and paper state (History). */
+export const useThreadsQuery = () =>
+  useQuery({
+    queryKey: ["threads"],
+    queryFn: () => import("./research-runs").then((m) => m.listThreads()),
+    staleTime: 15_000,
+    refetchInterval: (q) => (q.state.data?.some((t) => t.status === "in_progress" || t.paper_status === "generating") ? 5000 : false),
+  });
 export const usePapersQuery = () => useQuery({ queryKey: ["papers"], queryFn: fetchPapers, staleTime: 30_000 });
 export const useReportQuery = () => useQuery({ queryKey: ["report"], queryFn: fetchReport, staleTime: 30_000 });
 export const useUsageQuery = () => useQuery({ queryKey: ["usage"], queryFn: fetchUsage, staleTime: 30_000 });

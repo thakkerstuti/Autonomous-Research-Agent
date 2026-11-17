@@ -25,12 +25,13 @@ from app.db_url import engine_options, normalise_database_url
 from app.models import Base
 
 BACKEND = Path(__file__).resolve().parent.parent
-HEAD = "4b1d2f9c8a73"      # latest revision
-BASELINE = "e7de0666b0a1"  # the revision that creates every table
-APP_TABLES = {
+HEAD = "9c3e5a1d7b20"      # latest revision
+BASELINE = "e7de0666b0a1"  # the revision that creates the original tables
+BASELINE_TABLES = {
     "users", "oauth_accounts", "refresh_tokens", "auth_tokens",
     "papers", "paper_pages", "page_summaries", "study_artifacts", "research_sessions",
 }
+APP_TABLES = BASELINE_TABLES | {"research_documents", "research_document_versions"}
 
 
 def alembic_config(url: str | None = None, connection=None) -> Config:
@@ -118,7 +119,32 @@ def test_downgrade_never_drops_tables(tmp_path):
 def test_baseline_defines_every_model_table():
     source = (BACKEND / "alembic" / "versions" / f"{BASELINE}_baseline_schema.py").read_text(encoding="utf-8")
     created = set(re.findall(r"op\.create_table\('([a-z_]+)'", source))
-    assert created == set(Base.metadata.tables) == APP_TABLES
+    assert created == BASELINE_TABLES
+    assert set(Base.metadata.tables) == APP_TABLES
+
+
+def test_research_documents_migration_keeps_existing_sessions(tmp_path):
+    """A database at the previous revision with real research sessions: rows stay, new columns are NULL."""
+    url = sqlite_url(tmp_path / "before-documents.db")
+    command.upgrade(alembic_config(url), "4b1d2f9c8a73")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text("insert into users (id, email, email_verified) values ('u1', 'ada@example.com', 1)"))
+        conn.execute(text("insert into research_sessions (id, user_id, question, output_format, status, report) "
+                          "values ('s1', 'u1', 'An older question', 'full', 'ready', 'Old report')"))
+
+    command.upgrade(alembic_config(url), "head")
+
+    with engine.connect() as conn:
+        row = conn.execute(text("select question, report, thread_id, progress from research_sessions")).one()
+        assert tuple(row) == ("An older question", "Old report", None, None)
+        assert {"research_documents", "research_document_versions"} <= set(inspect(conn).get_table_names())
+        assert schema_differences(conn) == []
+    command.downgrade(alembic_config(url), "4b1d2f9c8a73")  # never drops the new tables or columns
+    with engine.connect() as conn:
+        assert {"research_documents", "research_document_versions"} <= set(inspect(conn).get_table_names())
+        assert conn.execute(text("select report from research_sessions")).scalar() == "Old report"
+    engine.dispose()
 
 
 def test_postgresql_sql_creates_every_table_and_enables_row_level_security(tmp_path):
@@ -138,6 +164,10 @@ def test_postgresql_sql_creates_every_table_and_enables_row_level_security(tmp_p
     assert "CREATE UNIQUE INDEX ix_users_email ON users (email)" in sql
     assert "FOREIGN KEY(paper_id) REFERENCES papers (id) ON DELETE CASCADE" in sql
     assert "ALTER TABLE papers ADD COLUMN storage_path VARCHAR(512)" in sql
+    assert "ALTER TABLE research_sessions ADD COLUMN thread_id VARCHAR(36)" in sql
+    assert "ALTER TABLE research_sessions ADD COLUMN progress JSON" in sql
+    assert "FOREIGN KEY(session_id) REFERENCES research_sessions (id) ON DELETE CASCADE" in sql
+    assert "CREATE UNIQUE INDEX ix_research_documents_session_id ON research_documents (session_id)" in sql
     assert "TopSecretPw42" not in sql and "someuser" not in sql and "db.invalid" not in sql  # no credentials in the output
     assert f"'{HEAD}'" in sql
 

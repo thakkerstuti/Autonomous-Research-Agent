@@ -54,6 +54,8 @@ export interface ChatMessage {
   view?: import("./research-view").ResearchView;
   /** When the request started, for the live run timer. */
   startedAt?: number;
+  /** The server's research run behind this answer (Working Flow, result, paper). */
+  run?: import("./research-runs").ResearchRun;
 }
 
 export interface SessionSummary {
@@ -62,6 +64,10 @@ export interface SessionSummary {
   mode: Mode;
   status: "ready" | "in_progress" | "review";
   updated: string;
+  output_format?: OutputFormat;
+  thread_id?: string;
+  has_paper?: boolean;
+  paper_edited?: boolean;
 }
 
 export interface PaperItem {

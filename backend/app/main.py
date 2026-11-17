@@ -8,6 +8,7 @@ from app import models
 from app.schemas import ResearchRequest
 from app.papers import router as papers_router
 from app.study_api import router as study_router
+from app.research_api import router as research_router
 from app.auth.routes import router as auth_router
 from app.auth.deps import get_current_user
 from app.auth import config as auth_config
@@ -66,6 +67,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(papers_router)
 app.include_router(study_router)
+app.include_router(research_router)
 app.include_router(auth_router)
 
 
@@ -141,9 +143,14 @@ def get_research_sessions(db: Session = Depends(get_db), user: models.User = Dep
         .order_by(models.ResearchSession.updated_at.desc())
         .all()
     )
+    docs = {
+        d.session_id: d
+        for d in db.query(models.ResearchDocument).filter(models.ResearchDocument.user_id == user.id).all()
+    }
     result = []
     for s in sessions:
         created_display = s.created_at.strftime("%b %d, %Y") if s.created_at else "Recently"
+        doc = docs.get(s.id)
         result.append({
             "id": s.id,
             "title": s.title or s.question,
@@ -151,6 +158,9 @@ def get_research_sessions(db: Session = Depends(get_db), user: models.User = Dep
             "status": s.status if s.status in ("ready", "in_progress", "review") else "ready",
             "updated": created_display,
             "output_format": s.output_format,
+            "thread_id": s.thread_id or s.id,
+            "has_paper": bool(doc and doc.status == "ready"),
+            "paper_edited": bool(doc and doc.edited),
         })
     return result
 

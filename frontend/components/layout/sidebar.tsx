@@ -4,13 +4,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  LayoutGrid, Search, BookOpen, FileText, Library, History, Settings,
+  LayoutGrid, Search, BookOpen, Library, History, Settings,
   LogIn, Sun, Moon, LogOut, PanelLeftClose, PanelLeftOpen, Plus, ChevronsUpDown,
 } from "lucide-react";
 import { useUiStore } from "@/lib/store";
 import { signOut } from "@/lib/auth";
-import { useSessionsQuery } from "@/lib/queries";
-import { modeHref } from "@/lib/nav";
+import { useThreadsQuery } from "@/lib/queries";
 import { toggleThemeWithReveal } from "@/lib/theme-transition";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -21,8 +20,7 @@ const links = [
   { href: "/research",    label: "Research",    icon: Search },
   { href: "/paper-study", label: "Paper study", icon: BookOpen },
   { href: "/library",     label: "Library",     icon: Library },
-  { href: "/report",      label: "Report",      icon: FileText },
-  { href: "/history",     label: "History",     icon: History },
+  { href: "/history",     label: "History",     icon: History }, // research papers live with their conversations here
 ];
 
 const STORAGE_KEY = "cognexa-sidebar";
@@ -43,7 +41,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isAuthenticated, theme, toggleTheme } = useUiStore();
-  const { data: sessions } = useSessionsQuery();
+  const { data: threads } = useThreadsQuery();
   const [collapsed, setCollapsed] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -73,7 +71,7 @@ export function Sidebar() {
     setIndicator(el ? { y: el.offsetTop, h: el.offsetHeight } : null);
   }, [pathname, collapsed]);
 
-  const recent = (sessions ?? []).slice(0, 5);
+  const recent = (threads ?? []).slice(0, 5); // one row per conversation, follow-ups included
 
   const handleLogout = async () => {
     try {
@@ -166,9 +164,9 @@ export function Sidebar() {
               ) : (
                 <ul className="flex flex-col">
                   {recent.map((s) => (
-                    <li key={s.id}>
+                    <li key={s.thread_id}>
                       <Link
-                        href={modeHref(s.mode, s.id)}
+                        href={`/research?thread=${s.thread_id}`}
                         title={s.title}
                         className="block truncate rounded-lg px-3 py-1.5 text-meta text-ink-soft transition-colors duration-150 hover:bg-surface2/70 hover:text-ink"
                       >
@@ -226,7 +224,7 @@ export function Sidebar() {
                   <Settings size={14} /> Settings
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onSelect={(e) => {
+                  onSelect={(e: Event) => {
                     e.preventDefault();
                     toggleThemeWithReveal(e as unknown as React.MouseEvent, toggleTheme);
                   }}
