@@ -128,7 +128,7 @@ export function PaperCard({ sessionId, initial }: { sessionId: string; initial: 
           href={`/research/paper/${doc.id}`}
           className="pressable inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-primary px-3.5 text-[13px] font-medium text-on-primary"
         >
-          Open paper <ArrowRight size={14} />
+          Open &amp; edit <ArrowRight size={14} />
         </Link>
         <button
           onClick={download}
@@ -139,34 +139,6 @@ export function PaperCard({ sessionId, initial }: { sessionId: string; initial: 
         </button>
         {error && <span className="text-[13px] text-bad">{error}</span>}
       </div>
-    </div>
-  );
-}
-
-/** For a finished Detailed Analysis: offer to write a full paper from the same research. */
-export function WritePaperAction({ sessionId, onStarted }: { sessionId: string; onStarted: (d: DocumentSummary) => void }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <div>
-      <button
-        onClick={async () => {
-          setBusy(true);
-          setError(null);
-          try {
-            onStarted(await requestPaper(sessionId));
-          } catch (e: any) {
-            setError(e?.message || "Couldn't start writing the paper.");
-          } finally {
-            setBusy(false);
-          }
-        }}
-        disabled={busy}
-        className="pressable inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium text-ink hover:border-line-hover disabled:opacity-50"
-      >
-        {busy ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />} Write a research paper from this
-      </button>
-      {error && <p className="mt-1.5 text-[13px] text-bad">{error}</p>}
     </div>
   );
 }

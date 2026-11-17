@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useRef, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowUpRight, Plus, Copy, Check, RotateCcw, AlertCircle, ChevronDown, Info } from "lucide-react";
+import { ArrowUpRight, Plus, Copy, Check, RotateCcw, AlertCircle, ChevronDown, Info, Layers, FileText } from "lucide-react";
 import { useUiStore } from "@/lib/store";
 import { ChatMessage, OutputFormat } from "@/lib/types";
 import { buildResearchView, ResearchView } from "@/lib/research-view";
@@ -10,11 +10,12 @@ import { Composer } from "@/components/research/composer";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ReportBody, SourceRow } from "@/components/research/report-body";
 import { WorkingFlow, formatDuration } from "@/components/research/working-flow";
-import { PaperCard, WritePaperAction } from "@/components/research/paper-card";
+import { PaperCard } from "@/components/research/paper-card";
 import { cn } from "@/lib/utils";
 import { readWorkspace, updateWorkspace } from "@/lib/workspace";
 import { queryClient } from "@/lib/query-client";
-import { DocumentSummary, MODE_LABEL, ResearchRun, getRun, getThread, startRun } from "@/lib/research-runs";
+import { MODE_LABEL, ResearchRun, getRun, getThread, startModeRun, startRun } from "@/lib/research-runs";
+import { modeCommand } from "@/lib/mode-intent";
 
 const CHIPS = [
   "Does AI actually help developers work faster?",
@@ -145,25 +146,66 @@ function SourcesToggle({ view }: { view: ResearchView }) {
   );
 }
 
-function Entry({ entry, onRetry, busy }: { entry: EntryData; onRetry: (q: string, format?: OutputFormat) => void; busy: boolean }) {
+/** After an answer: the same question in another mode, sent as structured data (not a chat message). */
+function ModeActions({ run, busy, onAction }: { run: ResearchRun; busy: boolean; onAction: (basedOn: string, mode: OutputFormat) => void }) {
+  const next: { mode: OutputFormat; label: string; icon: typeof Layers }[] =
+    run.output_format === "quick"
+      ? [{ mode: "detailed", label: "Detailed analysis", icon: Layers }, { mode: "full", label: "Research paper", icon: FileText }]
+      : run.output_format === "detailed"
+      ? [{ mode: "full", label: "Research paper", icon: FileText }]
+      : [];
+  if (!next.length) return null;
+  return (
+    <div className="mt-5 flex flex-wrap items-center gap-2" role="group" aria-label="Research this question again in another mode">
+      <span className="text-[12.5px] text-ink-faint">Go further:</span>
+      {next.map(({ mode, label, icon: Icon }) => (
+        <button
+          key={mode}
+          onClick={() => onAction(run.session_id, mode)}
+          disabled={busy}
+          className="pressable inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium text-ink hover:border-line-hover disabled:opacity-40"
+          title={mode === "full" ? "A full investigation of this question, written up as an editable research paper" : "An in-depth analysis of this question"}
+        >
+          <Icon size={13} /> {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Entry({ entry, onRetry, onAction, busy }: {
+  entry: EntryData;
+  onRetry: (q: string, format?: OutputFormat, basedOn?: string | null) => void;
+  onAction: (basedOn: string, mode: OutputFormat) => void;
+  busy: boolean;
+}) {
   const { q, a } = entry;
   const run = a?.run;
   const view = a?.view;
-  const mode: OutputFormat = run?.output_format ?? "quick";
+  const mode: OutputFormat = run?.output_format ?? a?.mode ?? "quick";
   const pending = !a || a.status === "pending" || run?.status === "in_progress";
   const failed = run?.status === "failed" || !!a?.answer?.startsWith("**Error:**");
-  const [startedDoc, setStartedDoc] = useState<DocumentSummary | null>(null);
-  const doc = run?.document ?? startedDoc;
-  // A Full Research Paper turn shows its short answer here and the paper as a document
+  const doc = run?.document ?? null;
+  // A Research paper turn's result is the document itself (shown as a card), with no short answer in front of it
   const isPaperTurn = mode === "full" && !!doc;
-  const body = (isPaperTurn ? run?.summary ?? run?.report : run?.report) ?? view?.report ?? a?.answer ?? "";
+  const body = isPaperTurn ? "" : run?.report ?? view?.report ?? a?.answer ?? "";
   const duration = run?.stats?.duration_seconds;
+  const modeRequest = !!(run?.based_on || q.basedOnQuestion);
 
   return (
     <article className="flex scroll-mt-6 flex-col gap-7">
       <div className="animate-msg-in ml-auto flex max-w-[min(85%,600px)] flex-col items-end gap-1.5">
-        <div className="whitespace-pre-wrap rounded-[20px] bg-surface3 px-4 py-2.5 text-[15.5px] leading-relaxed text-ink">{q.text}</div>
-        {run && <span className="px-1 text-[11.5px] text-ink-faint">{MODE_LABEL[mode]}</span>}
+        {modeRequest ? (
+          <div className="rounded-[20px] bg-surface3 px-4 py-2.5 text-ink">
+            <div className="flex items-center gap-1.5 text-[14.5px] font-medium">
+              {mode === "full" ? <FileText size={14} /> : <Layers size={14} />} {MODE_LABEL[mode]}
+            </div>
+            <div className="mt-0.5 text-[13.5px] leading-relaxed text-ink-soft">of “{q.basedOnQuestion ?? q.text}”</div>
+          </div>
+        ) : (
+          <div className="whitespace-pre-wrap rounded-[20px] bg-surface3 px-4 py-2.5 text-[15.5px] leading-relaxed text-ink">{q.text}</div>
+        )}
+        {(run || a?.mode) && !modeRequest && <span className="px-1 text-[11.5px] text-ink-faint">{MODE_LABEL[mode]}</span>}
       </div>
 
       <div className="flex gap-3.5">
@@ -178,7 +220,7 @@ function Entry({ entry, onRetry, busy }: { entry: EntryData; onRetry: (q: string
                 {run?.error || a?.answer?.replace(/^\*\*Error:\*\*\s*/, "") || "Something went wrong."}
               </p>
               <button
-                onClick={() => q.text && onRetry(q.text, mode)}
+                onClick={() => q.text && onRetry(q.basedOnQuestion ?? q.text, mode, run?.based_on)}
                 disabled={busy}
                 className="pressable mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium text-ink hover:border-line-hover disabled:opacity-40"
               >
@@ -193,23 +235,23 @@ function Entry({ entry, onRetry, busy }: { entry: EntryData; onRetry: (q: string
                   <AlertCircle size={14} className="mt-0.5 flex-shrink-0 text-warn" /> {run.note}
                 </p>
               )}
-              {isPaperTurn && <p className="col-label mb-2">In short</p>}
-              <ReportBody markdown={body} view={view} />
-              {run?.needs_review && (
-                <p className="mt-4 flex items-start gap-2 text-[13px] text-ink-faint">
-                  <Info size={13} className="mt-0.5 flex-shrink-0" /> Some statements rest on limited evidence; check the cited sources before relying on them.
-                </p>
+              {isPaperTurn ? (
+                <PaperCard sessionId={run!.session_id} initial={doc} />
+              ) : (
+                <>
+                  <ReportBody markdown={body} view={view} />
+                  {run?.needs_review && (
+                    <p className="mt-4 flex items-start gap-2 text-[13px] text-ink-faint">
+                      <Info size={13} className="mt-0.5 flex-shrink-0" /> Some statements rest on limited evidence; check the cited sources before relying on them.
+                    </p>
+                  )}
+                </>
               )}
 
-              {run && mode === "full" && doc && <div className="mt-6"><PaperCard sessionId={run.session_id} initial={doc} /></div>}
-              {run && mode === "detailed" && (
-                <div className="mt-5">
-                  {doc ? <PaperCard sessionId={run.session_id} initial={doc} /> : <WritePaperAction sessionId={run.session_id} onStarted={setStartedDoc} />}
-                </div>
-              )}
+              {run && <ModeActions run={run} busy={busy} onAction={onAction} />}
 
-              <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1">
-                <CopyButton text={body} />
+              <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1">
+                {!isPaperTurn && <CopyButton text={body} />}
                 {duration != null && <span className="text-[12.5px] text-ink-faint">Researched in {formatDuration(Math.round(duration))}</span>}
               </div>
               <div className="mt-1 flex flex-col items-start gap-0.5">
@@ -228,11 +270,15 @@ function Entry({ entry, onRetry, busy }: { entry: EntryData; onRetry: (q: string
 
 function turnMessages(run: ResearchRun): ChatMessage[] {
   return [
-    { id: `q-${run.session_id}`, role: "user", text: run.research_question, status: "done" },
+    {
+      id: `q-${run.session_id}`, role: "user", text: run.research_question, status: "done",
+      ...(run.based_on ? { basedOnQuestion: run.research_question } : {}),
+    },
     {
       id: `a-${run.session_id}`,
       role: "assistant",
       status: run.status === "in_progress" ? "pending" : "done",
+      mode: run.output_format,
       run,
       view: run.status === "in_progress" ? undefined : buildResearchView(run),
       answer: run.report ?? undefined,
@@ -396,20 +442,30 @@ function ResearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function send(text: string, format: OutputFormat = outputFormat) {
-    if (!text.trim() || busy) return;
+  /** The latest finished question of this conversation (what a typed "give detailed analysis" refers to). */
+  function latestQuestionTurn(): ResearchRun | null {
+    const runs = useUiStore.getState().chatHistories.research.map((m) => m.run).filter((r): r is ResearchRun => !!r);
+    return [...runs].reverse().find((r) => r.status !== "in_progress" && r.status !== "failed") ?? null;
+  }
+
+  /**
+   * Starts a run. With basedOn, it is an earlier question again in another mode: the request carries
+   * output_format + based_on (the server takes the question from that session), never typed text.
+   */
+  async function start(format: OutputFormat, input: { text: string } | { basedOn: string; question: string }) {
+    if (busy) return;
     setSending(true);
     setLoadError(null);
     const tempId = crypto.randomUUID();
-    appendMessage("research", { id: `q-${tempId}`, role: "user", text, status: "done" });
+    const isMode = "basedOn" in input;
     appendMessage("research", {
-      id: `a-${tempId}`,
-      role: "assistant",
-      status: "pending",
-      startedAt: Date.now(),
+      id: `q-${tempId}`, role: "user", status: "done",
+      text: isMode ? input.question : input.text,
+      ...(isMode ? { basedOnQuestion: input.question } : {}),
     });
+    appendMessage("research", { id: `a-${tempId}`, role: "assistant", status: "pending", mode: format, startedAt: Date.now() });
     try {
-      const run = await startRun(text, format, threadId);
+      const run = isMode ? await startModeRun(input.basedOn, format) : await startRun(input.text, format, threadId);
       // Swap the placeholders for the server's ids, then follow the run
       const store = useUiStore.getState();
       store.resetHistory(
@@ -428,6 +484,24 @@ function ResearchPage() {
     } finally {
       setSending(false);
     }
+  }
+
+  function runMode(basedOn: string, format: OutputFormat) {
+    const turn = useUiStore.getState().chatHistories.research.find((m) => m.run?.session_id === basedOn)?.run;
+    void start(format, { basedOn, question: turn?.research_question ?? "" });
+  }
+
+  /** The composer: a new question, a follow-up, or a typed mode instruction about the last question. */
+  function send(text: string, format: OutputFormat = outputFormat, basedOn?: string | null) {
+    if (!text.trim() || busy) return;
+    if (basedOn) return runMode(basedOn, format); // "Try again" on a mode run
+    const command = modeCommand(text);
+    const last = latestQuestionTurn();
+    if (command && last) {
+      chooseFormat(command);
+      return runMode(last.based_on ?? last.session_id, command);
+    }
+    void start(format, { text });
   }
 
   // A question handed over from the dashboard is asked once, then removed from the URL.
@@ -480,7 +554,7 @@ function ResearchPage() {
         ) : (
           <div className="mx-auto flex max-w-[760px] flex-col gap-12 px-5 pb-16 pt-10 sm:px-8">
             {entries.map((e) => (
-              <Entry key={e.q.id} entry={e} busy={busy} onRetry={send} />
+              <Entry key={e.q.id} entry={e} busy={busy} onRetry={send} onAction={runMode} />
             ))}
           </div>
         )}

@@ -115,15 +115,23 @@ def _engine_question(db: Session, s: models.ResearchSession) -> str:
     if not s.thread_id or s.thread_id == s.id:
         return s.question
     root = db.get(models.ResearchSession, s.thread_id)
-    if not root or root.user_id != s.user_id:
+    if not root or root.user_id != s.user_id or root.question.strip() == s.question.strip():
         return s.question
     return f"{s.question} (follow-up to the research question: \"{root.question}\")"
 
 
+def _audited(write, question: str, engine_question: str, result: dict) -> tuple[str, dict]:
+    """A user-facing answer, checked by the engine's own audit (citations, grounding, counter-evidence)."""
+    from app.llm import critique_report
+    text = write(question, result)
+    audited, critique = critique_report(engine_question, result.get("hypotheses") or [], result.get("evidence_log") or [], text)
+    return research_paper.clean_user_markdown(audited), critique
+
+
 def run_job(session_id: str) -> None:
-    """The whole run for one question, in a background thread."""
+    """The whole run for one question, in a background thread. The session reads as in progress
+    until every part (research, writing, and for a paper its document and PDF) is finished."""
     from app.research import run_research  # the existing engine
-    from app.llm import critique_report  # the engine's own audit, reused for the Detailed Analysis
 
     db = SessionLocal()
     try:
@@ -147,34 +155,34 @@ def run_job(session_id: str) -> None:
 
         db = SessionLocal()
         s = db.get(models.ResearchSession, session_id)
-        # Keep what the user asked and chose (the engine stores its own wording and format)
-        s.question, s.title, s.output_format = question, question, mode
+        # Keep what the user asked and chose (the engine stores its own wording, format and status)
+        final_status = result.get("status") or "ready"
+        s.question, s.title, s.output_format, s.status = question, question, mode, "in_progress"
         s.hypotheses, s.evidence_log = result.get("hypotheses") or [], result.get("evidence_log") or []
         s.critique, s.stats = result.get("critique") or {}, result.get("stats") or {}
-        s.status = result.get("status") or "ready"
-        s.report = research_paper.strip_internal_labels(result.get("report") or "")
-        progress = _advance(s.progress, "preparing", "writing" if mode != "quick" else None)
-        s.progress = progress
+        s.report = result.get("report") or ""  # the engine's own answer, kept for older views; replaced below
+        s.progress = _advance(s.progress, "preparing", "writing")
         db.commit()
 
-        if mode == "detailed":
+        if mode in ("quick", "detailed"):
+            writer = research_paper.write_quick_answer if mode == "quick" else research_paper.write_detailed_analysis
             try:
-                analysis = research_paper.write_detailed_analysis(question, result)
-                audited, critique = critique_report(engine_question, result.get("hypotheses") or [],
-                                                    result.get("evidence_log") or [], analysis)
-                s.report = research_paper.strip_internal_labels(audited)
+                s.report, critique = _audited(writer, question, engine_question, result)
+                s.progress = {**s.progress, "answer_written": True}
                 s.critique = critique
-                s.progress = {**s.progress, "summary": result.get("report")}
                 if critique.get("needs_review"):
-                    s.status = "review"
+                    final_status = "review"
             except Exception as exc:
-                log.warning("detailed analysis failed session=%s error=%s", session_id, type(exc).__name__)
-                s.status = "partial"
-                s.progress = {**s.progress, "note": "The detailed analysis couldn't be written, so the concise answer is shown."}
-        elif mode == "full":
-            s.progress = {**s.progress, "summary": s.report}
+                log.warning("%s answer failed session=%s error=%s", mode, session_id, type(exc).__name__)
+                final_status = "partial"
+                s.progress = {**s.progress, "note": (
+                    "The detailed analysis couldn't be written, so a short answer is shown." if mode == "detailed"
+                    else "The answer was written in a simpler form.")}
+        else:
             db.commit()
             _write_paper(db, s, question, result, author)
+            db.refresh(s)
+        s.status = final_status
         s.progress = _advance(s.progress, None, finished=True)
         db.commit()
     except Exception as exc:
@@ -205,7 +213,8 @@ def _write_paper(db: Session, s: models.ResearchSession, question: str, result: 
         db.add(doc)
     doc.status, doc.error = "generating", None
     db.commit()
-    parts = {"outline": "outline", "front": "introduction", "analysis": "analysis", "closing": "conclusions", "audit": "checking"}
+    parts = {"outline": "outline", "front": "introduction", "background": "background", "analysis": "analysis",
+             "findings": "findings", "closing": "conclusions", "audit": "checking"}
     try:
         content = research_paper.write_paper(
             question, result, author,
@@ -216,6 +225,8 @@ def _write_paper(db: Session, s: models.ResearchSession, question: str, result: 
         db.add(models.ResearchDocumentVersion(document_id=doc.id, version=version, source="generated", content=content))
         doc.current_version, doc.title, doc.status = version, content["title"], "ready"
         db.commit()
+        _set_progress(s.id, "preparing", "paper:pdf")
+        _store_pdf(db, doc, version, content)  # the PDF of the generated original, kept in private storage
     except Exception as exc:
         db.rollback()
         log.warning("paper failed session=%s error=%s", s.id, type(exc).__name__)
@@ -224,6 +235,28 @@ def _write_paper(db: Session, s: models.ResearchSession, question: str, result: 
             "The research paper couldn't be written. You can try again from the conversation."
         db.commit()
     return doc
+
+
+def _store_pdf(db: Session, doc: models.ResearchDocument, version: int, content: dict) -> bytes | None:
+    """Render one version's PDF and keep it in the private bucket. Returns the bytes, or None if rendering failed.
+    A storage failure is logged, not fatal: the paper's content is safe in PostgreSQL and the PDF can be made again."""
+    try:
+        data = research_pdf.render_pdf(content)
+    except Exception as exc:
+        log.warning("paper pdf render failed doc=%s error=%s", doc.id, type(exc).__name__)
+        return None
+    if storage.is_configured():
+        path = _pdf_object_path(doc, version)
+        try:
+            storage.upload_pdf(path, data)
+        except storage.StorageError as exc:
+            if "409" not in str(exc) and "Duplicate" not in str(exc):  # already stored by an earlier request: fine
+                log.warning("paper pdf store failed doc=%s error=%s", doc.id, exc)
+                return data
+        if version == doc.current_version:
+            doc.pdf_path, doc.pdf_version = path, version
+            db.commit()
+    return data
 
 
 def paper_job(session_id: str) -> None:
@@ -249,9 +282,31 @@ PUBLIC_EVIDENCE_FIELDS = ("id", "source_url", "source_title", "snippet", "quote"
                           "verification_status", "source_type", "retrieved_at")
 
 
+def _utc(value) -> str | None:
+    """Timestamps go out as UTC with an explicit zone. The database stores naive UTC, which a browser
+    would otherwise read as local time (in India that shifted every run by 5 h 30 min)."""
+    if not value:
+        return None
+    if isinstance(value, datetime.datetime):
+        value = value.isoformat()
+    value = str(value)
+    return value if value.endswith("Z") or re.search(r"[+-]\d\d:\d\d$", value) else f"{value}Z"
+
+
+def _mode(s: models.ResearchSession) -> str:
+    """The mode the user chose for this run (recorded when it started; the engine stores its own format)."""
+    chosen = (s.progress or {}).get("mode")
+    return chosen if chosen in MODES else (s.output_format if s.output_format in MODES else "full")
+
+
 def _status(s: models.ResearchSession, db: Session | None = None) -> str:
-    if s.status == "in_progress":
-        updated = (s.progress or {}).get("updated_at")
+    progress = s.progress or {}
+    # A run with a working flow is finished only when the whole job says so: the engine saves its own
+    # status before the answer for this mode (analysis, paper, PDF) has been written.
+    running = s.status == "in_progress" or (
+        bool(progress.get("started_at")) and not progress.get("finished_at") and s.status != "failed")
+    if running:
+        updated = progress.get("updated_at")
         try:
             stale = updated and _now() - datetime.datetime.fromisoformat(updated) > STALE_AFTER
         except ValueError:
@@ -262,6 +317,7 @@ def _status(s: models.ResearchSession, db: Session | None = None) -> str:
                 s.progress = _advance(s.progress, None, failed=True)
                 db.commit()
             return "failed"
+        return "in_progress"
     return s.status or "ready"
 
 
@@ -275,36 +331,53 @@ def _doc_summary(doc: models.ResearchDocument | None) -> dict | None:
         "error": doc.error,
         "current_version": doc.current_version,
         "edited": bool(doc.edited),
-        "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+        "pdf_stored": bool(doc.pdf_path),
+        "updated_at": _utc(doc.updated_at),
     }
+
+
+def _run_seconds(progress: dict) -> float | None:
+    """Wall-clock time of the whole run, from its own start and finish (not the conversation's dates)."""
+    try:
+        start = datetime.datetime.fromisoformat(str(progress["started_at"]).removesuffix("Z"))
+        end = datetime.datetime.fromisoformat(str(progress["finished_at"]).removesuffix("Z"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    seconds = (end - start).total_seconds()
+    return round(seconds, 1) if 0 <= seconds < 6 * 3600 else None
 
 
 def public_session(s: models.ResearchSession, doc: models.ResearchDocument | None, db: Session | None = None) -> dict:
     status = _status(s, db)
     progress = s.progress or {}
     done = status in DONE
+    mode = _mode(s)
+    paper_turn = mode == "full" and doc is not None
     return {
         "session_id": s.id,
         "thread_id": s.thread_id or s.id,
         "research_question": s.question,
-        "output_format": s.output_format,
+        "output_format": mode,
+        "based_on": progress.get("based_on"),
         "status": status,
         "progress": {
             "stage": progress.get("stage"),
             "stages": progress.get("stages") or ({x: "completed" for x in STAGES} if done else {}),
             "detail": progress.get("detail"),
-            "started_at": progress.get("started_at"),
-            "finished_at": progress.get("finished_at"),
+            "started_at": _utc(progress.get("started_at")),
+            "finished_at": _utc(progress.get("finished_at")) if status != "in_progress" else None,
         },
-        "report": research_paper.strip_internal_labels(s.report) if done and s.report else None,
-        "summary": progress.get("summary") if s.output_format == "full" else None,
+        # A paper turn's result is the document itself, so no short answer is put in front of it
+        "report": research_paper.clean_user_markdown(s.report, engine_text=not progress.get("answer_written"))
+        if done and s.report and not paper_turn else None,
         "note": progress.get("note"),
         "error": s.error if status == "failed" else None,
         "needs_review": bool((s.critique or {}).get("needs_review")) if done else False,
         "evidence_log": [{k: e.get(k) for k in PUBLIC_EVIDENCE_FIELDS} for e in (s.evidence_log or [])] if done else [],
-        "stats": {"duration_seconds": (s.stats or {}).get("duration_seconds")} if done else {},
-        "created_at": s.created_at.isoformat() if s.created_at else None,
-        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        "stats": {"duration_seconds": _run_seconds(progress) if progress.get("started_at")
+                  else (s.stats or {}).get("duration_seconds")} if done else {},
+        "created_at": _utc(s.created_at),
+        "updated_at": _utc(s.updated_at),
         "document": _doc_summary(doc),
     }
 
@@ -344,37 +417,50 @@ def _docs_for(db: Session, session_ids: list[str], user: models.User) -> dict[st
 # ───────── routes: runs and threads ─────────
 
 class RunRequest(BaseModel):
-    question: str
+    question: str = ""
     output_format: str = "quick"
     thread_id: str | None = None
+    # Re-run an earlier question of the conversation in another mode ("Detailed analysis", "Research paper"):
+    # the question is taken from that session on the server, never from a typed instruction.
+    based_on: str | None = None
 
 
 @router.post("/runs", status_code=202)
 def start_run(body: RunRequest, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    question = (body.question or "").strip()
+    mode = (body.output_format or "").strip().lower()
+    if mode not in MODES:
+        raise HTTPException(status_code=400, detail="Choose Quick Answer, Detailed Analysis or Full Research Paper.")
+    based_on = None
+    if body.based_on:
+        based_on = _owned_session(db, body.based_on, user)
+        question = based_on.question.strip()
+        thread_id = based_on.thread_id or based_on.id
+    else:
+        question = (body.question or "").strip()
+        thread_id = None
+        if body.thread_id:
+            if not _thread_sessions(db, body.thread_id, user):
+                raise HTTPException(status_code=404, detail="Research conversation not found")
+            thread_id = body.thread_id
     if len(question) < 10:
         raise HTTPException(status_code=400, detail="Question must be at least 10 characters long.")
     if len(question) > 2000:
         raise HTTPException(status_code=400, detail="Question must be at most 2,000 characters long.")
-    mode = (body.output_format or "").strip().lower()
-    if mode not in MODES:
-        raise HTTPException(status_code=400, detail="Choose Quick Answer, Detailed Analysis or Full Research Paper.")
-    thread_id = None
-    if body.thread_id:
-        if not _thread_sessions(db, body.thread_id, user):
-            raise HTTPException(status_code=404, detail="Research conversation not found")
-        thread_id = body.thread_id
 
+    progress = _initial_progress(mode)
+    if based_on is not None:
+        progress["based_on"] = based_on.id
     s = models.ResearchSession(
         user_id=user.id, question=question, title=question, output_format=mode, status="in_progress",
-        hypotheses=[], evidence_log=[], critique={}, stats={}, progress=_initial_progress(mode),
+        hypotheses=[], evidence_log=[], critique={}, stats={}, progress=progress,
     )
     db.add(s)
     db.flush()
     s.thread_id = thread_id or s.id
     db.commit()
     db.refresh(s)
-    log.info("research run queued session=%s user=%s mode=%s follow_up=%s", s.id, user.id[:8], mode, bool(thread_id))
+    log.info("research run queued session=%s user=%s mode=%s follow_up=%s based_on=%s",
+             s.id, user.id[:8], mode, bool(thread_id), bool(based_on))
     _submit(run_job, s.id)
     db.refresh(s)
     return public_session(s, None, db)
@@ -403,17 +489,19 @@ def list_threads(db: Session = Depends(get_db), user: models.User = Depends(get_
         t = threads.get(key)
         updated = r.updated_at or r.created_at
         doc = docs.get(r.id)
+        mode = _mode(r)
         if not t:
             t = threads[key] = {
-                "thread_id": key, "title": r.question, "output_format": r.output_format,
+                "thread_id": key, "title": r.question, "output_format": mode,
                 "created_at": r.created_at, "updated_at": updated, "turns": 0, "status": None,
-                "modes": [], "has_paper": False, "paper_status": None, "paper_edited": False,
+                "modes": [], "latest_mode": mode, "has_paper": False, "paper_status": None, "paper_edited": False,
                 "paper_saved_at": None, "document_id": None,
             }
         t["turns"] += 1
         t["status"] = _status(r)
-        if r.output_format not in t["modes"]:
-            t["modes"].append(r.output_format)
+        t["latest_mode"] = mode
+        if mode not in t["modes"]:
+            t["modes"].append(mode)
         if updated and (not t["updated_at"] or updated > t["updated_at"]):
             t["updated_at"] = updated
         if doc:
@@ -427,7 +515,7 @@ def list_threads(db: Session = Depends(get_db), user: models.User = Depends(get_
     out = sorted(threads.values(), key=lambda t: t["updated_at"] or datetime.datetime.min, reverse=True)
     for t in out:
         for k in ("created_at", "updated_at", "paper_saved_at"):
-            t[k] = t[k].isoformat() if t[k] else None
+            t[k] = _utc(t[k])
     return out
 
 
@@ -446,12 +534,13 @@ def get_thread(thread_id: str, db: Session = Depends(get_db), user: models.User 
 
 @router.post("/sessions/{session_id}/paper", status_code=202)
 def create_paper(session_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    """Write the full paper for a finished Detailed or Full session (or retry a failed one)."""
+    """Retry the paper of a finished Full Research Paper run whose writing failed. (A paper from a Quick or
+    Detailed answer is a new, complete investigation: POST /research/runs with based_on and output_format=full.)"""
     s = _owned_session(db, session_id, user)
     if _status(s, db) not in DONE:
         raise HTTPException(status_code=409, detail="The research hasn't finished yet.")
-    if s.output_format not in ("detailed", "full"):
-        raise HTTPException(status_code=400, detail="Full papers are written from Detailed or Full research.")
+    if _mode(s) != "full":
+        raise HTTPException(status_code=400, detail="Choose Research paper to run a full investigation for this question.")
     if not any(e.get("stance") in ("supports", "refutes") for e in (s.evidence_log or [])):
         raise HTTPException(status_code=409, detail="This research found too little evidence for a full paper.")
     doc = _docs_for(db, [s.id], user).get(s.id)
@@ -488,7 +577,7 @@ def _document_payload(db: Session, doc: models.ResearchDocument, version: int | 
         "content": row.content if row else None,
         "pdf": {"version": doc.pdf_version, "stored": bool(doc.pdf_path)},
         "versions": [{"version": v.version, "source": v.source,
-                      "created_at": v.created_at.isoformat() if v.created_at else None} for v in versions],
+                      "created_at": _utc(v.created_at)} for v in versions],
     }
 
 
@@ -553,15 +642,7 @@ def download_pdf(document_id: str, version: int | None = None, db: Session = Dep
         except storage.StorageError as exc:
             log.warning("paper pdf load failed doc=%s error=%s", doc.id, exc)
 
-    data = research_pdf.render_pdf(row.content)
-    if storage.is_configured():
-        try:
-            storage.upload_pdf(path, data)
-        except storage.StorageError as exc:
-            if "409" not in str(exc) and "Duplicate" not in str(exc):  # already stored by an earlier request: fine
-                log.warning("paper pdf store failed doc=%s error=%s", doc.id, exc)
-                return Response(data, media_type="application/pdf", headers=headers)
-        if wanted == doc.current_version:
-            doc.pdf_path, doc.pdf_version = path, wanted
-            db.commit()
+    data = _store_pdf(db, doc, wanted, row.content)  # first request for this version (e.g. after an edit)
+    if data is None:
+        raise HTTPException(status_code=500, detail="The PDF couldn't be made. Please try again.")
     return Response(data, media_type="application/pdf", headers=headers)

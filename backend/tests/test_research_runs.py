@@ -85,6 +85,7 @@ class Writer:
 
     def __init__(self):
         self.calls: list[str] = []
+        self.prompts: list[str] = []
         self.fail: Exception | None = None
 
     def __call__(self, prompt, schema):
@@ -92,28 +93,41 @@ class Writer:
         if self.fail:
             raise self.fail
         name = schema.__name__
+        self.prompts.append(prompt)
+        if name == "QuickAnswerModel":
+            return schema(answer="Spaced practice improves delayed recall in adults [E1], although a classroom study in children found no effect [E2] [H1].",
+                          evidence=["A randomised trial reported better delayed recall with spacing [E1]."],
+                          caveats=["Evidence in children is limited and mixed [E2]."])
         if name == "DetailedAnalysisModel":
-            return schema(markdown=(
-                "## Overview\nSpaced practice improves delayed recall in adults [E1], though evidence in children differs [E2] [H1].\n\n"
-                "## Key findings\n" + "Adults showed better delayed recall with spacing [E1]. " * 12 +
-                "\n\n## Comparing the evidence\nClassroom studies with children found no effect [E2].\n\n"
-                "## Limitations and open questions\nFew trials were available."))
+            para = "Adults showed better delayed recall with spaced practice than with massed practice in the trials reviewed [E1]. "
+            heads = ["Introduction and Background", "Retention Gains in Adults", "Differences by Age Group", "Key Findings",
+                     "Comparing Studies and Perspectives", "Evidence For and Against", "Contradictions and Possible Explanations",
+                     "Implications", "Limitations", "Overall Synthesis"]
+            return schema(sections=[{"heading": h, "level": 1, "body": (para * 4 + "\n\n") * 2 + "Children showed no effect [E2] [H1]."}
+                                    for h in heads])
         if name == "PaperOutline":
             return schema(title="Spaced Practice and Long-Term Retention: An Evidence Review",
                           abstract="This review examines whether spaced practice improves retention [E1]. " * 8,
                           keywords=["spacing", "memory", "retention"], themes=["Retention gains in adults", "Differences by age group"])
         if name == "PaperPart":
-            if '"Introduction"' in prompt and "Write these sections" in prompt:
-                heads = [("Introduction", 1), ("Methodology", 1), ("Background and Literature Review", 1)]
-            elif '"Thematic Analysis"' in prompt:
-                heads = [("Thematic Analysis", 1), ("Retention gains in adults", 2), ("Findings", 1), ("Comparative Analysis", 1)]
-            else:
-                heads = [("Contradictions and Conflicting Evidence", 1), ("Discussion", 1), ("Limitations", 1), ("Conclusion", 1)]
             body = ("A randomised trial reported that spaced practice improves delayed recall in adults [E1][E3]. "
                     "In contrast, a classroom study found no effect in children [E2] (H2). "
                     "Spacing doubles recall in every population [E1]. "
-                    "A further point cites a source that was never retrieved [E999]. ")
-            return schema(sections=[{"heading": h, "level": lv, "body": body * 2} for h, lv in heads] + [{"heading": "Empty", "body": "tbd"}])
+                    "A further point cites a source that was never retrieved [E999]. ") * 2
+            if '"Thematic Analysis"' in prompt:  # a parent heading with a one-line intro, then its themes
+                return schema(sections=[{"heading": "Thematic Analysis", "level": 1, "body": "Two themes emerge."},
+                                        {"heading": "Retention gains in adults", "level": 2, "body": body},
+                                        {"heading": "Differences by age group", "level": 2, "body": body}])
+            if '"Comparative Analysis"' in prompt:
+                heads = [("Findings", 1), ("Comparative Analysis", 1)]
+            elif '"Background and Literature Review"' in prompt:
+                heads = [("Background and Literature Review", 1)]
+            elif '"Introduction"' in prompt:
+                heads = [("Introduction", 1), ("Methodology", 1)]
+            else:
+                heads = [("Contradictions and Conflicting Evidence", 1), ("Discussion", 1), ("Research Gaps and Future Directions", 1),
+                         ("Limitations", 1), ("Conclusion", 1)]
+            return schema(sections=[{"heading": h, "level": lv, "body": body} for h, lv in heads] + [{"heading": "Empty", "body": "tbd"}])
         if name == "PaperAudit":
             return schema(corrections=[{"original": "Spacing doubles recall in every population [E1].",
                                         "corrected": "Spacing improved recall in the adult trials reviewed [E1]."},
@@ -160,22 +174,31 @@ def assert_no_internals(payload):
         for k in INTERNAL_EVIDENCE_KEYS:
             assert k not in e, k
     assert "[H1]" not in text and "(H2)" not in text
+    # the engine's internal report vocabulary never reaches the reader
+    for phrase in ("Core Verdict", "Findings by Hypothesis", "hypotheses", "Mock quick answer", "Quick Answer"):
+        assert phrase.lower() not in text.lower(), phrase
+
+
+def words(text):
+    return len((text or "").split())
 
 
 # ───────── modes ─────────
 
-def test_quick_answer_is_concise_one_round_and_hides_internals(client, token, engine, writer):
+def test_quick_answer_is_direct_one_round_and_hides_internals(client, token, engine, writer):
     data = run(client, token, "quick")
     assert data["status"] in ("ready", "review", "partial")
     assert data["output_format"] == "quick"
     assert data["research_question"] == QUESTION
-    assert data["report"] and "Mock quick answer" in data["report"]
-    assert data["document"] is None and data["summary"] is None
+    report = data["report"]
+    assert report.startswith("Spaced practice improves delayed recall")  # the direct answer first, no verdict heading
+    assert "## Key evidence" in report and "## Caveats and uncertainty" in report and "[E1]" in report
+    assert data["document"] is None and "summary" not in data
     assert len(engine.searches) == 4  # one round: the plan's subquestions only
     assert data["progress"]["stages"] == {s: "completed" for s in research_api.STAGES}
     assert data["evidence_log"] and data["evidence_log"][0]["source_url"].startswith("https://")
     assert_no_internals(data)
-    assert writer.calls == []  # no extra writing for a quick answer
+    assert writer.calls == ["QuickAnswerModel"]
 
 
 def test_detailed_analysis_is_deeper_two_rounds_and_audited(client, token, engine, writer):
@@ -185,20 +208,35 @@ def test_detailed_analysis_is_deeper_two_rounds_and_audited(client, token, engin
     data = run(client, token, "detailed")
     assert data["output_format"] == "detailed"
     assert 4 < len(engine.searches) <= 8  # a second round of targeted searches
-    assert "## Key findings" in data["report"] and "## Comparing the evidence" in data["report"]
-    assert len(data["report"]) > 3 * len(quick["report"])
-    assert writer.calls == ["DetailedAnalysisModel"]
+    for heading in ("Introduction and Background", "Key Findings", "Comparing Studies and Perspectives",
+                    "Contradictions and Possible Explanations", "Implications", "Limitations", "Overall Synthesis"):
+        assert f"## {heading}" in data["report"], heading
+    assert words(data["report"]) >= research_paper.DETAILED_MIN_WORDS
+    assert words(data["report"]) > 5 * words(quick["report"])
+    assert writer.calls == ["QuickAnswerModel", "DetailedAnalysisModel"]
     assert data["document"] is None
     assert_no_internals(data)
+
+
+def test_a_short_detailed_draft_is_written_again_at_full_length(client, token, engine, writer, monkeypatch):
+    drafts = iter([
+        research_paper.DetailedAnalysisModel(sections=[{"heading": "Overview", "body": "Too short [E1]. " * 40}]),
+        research_paper.DetailedAnalysisModel(sections=[{"heading": f"Part {i}", "body": "Spacing helps adults recall more [E1]. " * 40}
+                                                       for i in range(8)]),
+    ])
+    monkeypatch.setattr(research_paper, "_call", lambda prompt, schema: next(drafts))
+    text = research_paper.write_detailed_analysis(QUESTION, {"hypotheses": [], "evidence_log": [], "stats": {}})
+    assert words(text) >= research_paper.DETAILED_MIN_WORDS
 
 
 def test_full_research_paper_is_structured_cited_and_traceable(client, token, engine, writer):
     data = run(client, token, "full")
     assert data["output_format"] == "full"
     assert len(engine.searches) > 8  # three rounds
-    assert data["summary"]  # a short answer for the chat; the paper is the document
+    assert data["report"] is None  # the result is the document: no short answer pasted in front of it
     doc = data["document"]
     assert doc["status"] == "ready" and doc["current_version"] == 1 and doc["edited"] is False
+    assert writer.calls == ["PaperOutline"] + ["PaperPart"] * 5 + ["PaperAudit"]  # written section by section
     assert_no_internals(data)
 
     paper = client.get(f"/research/documents/{doc['id']}", headers=bearer(token)).json()
@@ -207,8 +245,13 @@ def test_full_research_paper_is_structured_cited_and_traceable(client, token, en
     assert c["author"] == "Ada Lovelace" and c["question"] == QUESTION
     assert "[E" not in c["abstract"]  # no citations in the abstract
     headings = [s["heading"] for s in c["sections"]]
-    assert headings[:3] == ["Introduction", "Methodology", "Background and Literature Review"]
-    assert "Conclusion" in headings and "Empty" not in headings  # placeholder sections are dropped
+    assert headings == ["Introduction", "Methodology", "Background and Literature Review",
+                        "Thematic Analysis", "Retention gains in adults", "Differences by age group",
+                        "Findings", "Comparative Analysis", "Contradictions and Conflicting Evidence", "Discussion",
+                        "Research Gaps and Future Directions", "Limitations", "Conclusion"]
+    # the parent heading is kept although its own text is one line; its themes are its subsections
+    assert [s["level"] for s in c["sections"][3:6]] == [1, 2, 2]
+    assert "Empty" not in headings  # placeholder sections are dropped
     body = " ".join(s["body"] for s in c["sections"])
     assert "[E" not in body and "H2" not in body  # internal labels never reach the reader
     assert "[1, 2]" in body or "[1]" in body
@@ -386,7 +429,7 @@ def test_invalid_question_fails_clearly(client, token, engine, writer):
 def test_paper_failure_keeps_the_answer_and_can_be_retried(client, token, engine, writer):
     writer.fail = RuntimeError("model down")
     data = run(client, token, "full")
-    assert data["status"] in ("ready", "review", "partial") and data["summary"]
+    assert data["status"] in ("ready", "review", "partial") and data["evidence_log"]  # the research itself is kept
     assert data["document"]["status"] == "failed" and data["document"]["error"]
     writer.fail = None
     r = client.post(f"/research/sessions/{data['session_id']}/paper", headers=bearer(token))
@@ -468,3 +511,162 @@ def test_pdf_renders_unicode_titles_and_long_urls():
     for page in doc:  # nothing runs off the page
         for b in page.get_text("blocks"):
             assert b[2] <= page.rect.width - 40
+
+
+# ───────── regressions: mode actions, propagation, History, timing, internal vocabulary ─────────
+
+def act(client, token, based_on, mode):
+    """The answer's mode buttons: structured request data, not a typed instruction."""
+    r = client.post("/research/runs", json={"based_on": based_on, "output_format": mode}, headers=bearer(token))
+    assert r.status_code == 202, r.text
+    return client.get(f"/research/runs/{r.json()['session_id']}", headers=bearer(token)).json()
+
+
+def test_detailed_analysis_selected_from_a_quick_answer(client, token, engine, writer):
+    quick = run(client, token, "quick")
+    detailed = act(client, token, quick["session_id"], "detailed")
+    # the same question, researched again in depth, in the same conversation
+    assert detailed["output_format"] == "detailed" and detailed["research_question"] == QUESTION
+    assert detailed["thread_id"] == quick["thread_id"] and detailed["based_on"] == quick["session_id"]
+    assert engine.plan_questions[-1] == QUESTION  # the engine got the question, not "give detailed analysis"
+    assert "## Key Findings" in detailed["report"] and words(detailed["report"]) >= research_paper.DETAILED_MIN_WORDS
+    with SessionLocal() as db:
+        row = db.get(models.ResearchSession, detailed["session_id"])
+        assert row.output_format == "detailed" and row.progress["mode"] == "detailed"  # persisted on that session
+    thread = client.get(f"/research/threads/{quick['thread_id']}", headers=bearer(token)).json()
+    assert [t["output_format"] for t in thread["turns"]] == ["quick", "detailed"]  # not labelled Quick Answer
+    assert_no_internals(thread)
+
+
+def test_research_paper_selected_from_an_existing_investigation(client, token, engine, writer, monkeypatch):
+    from test_storage import FakeBucket
+    bucket = FakeBucket()
+    monkeypatch.setenv("SUPABASE_URL", "https://example-project.supabase.co")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_TEST")
+    monkeypatch.setenv("SUPABASE_STORAGE_BUCKET", "cognexa-papers")
+    monkeypatch.setattr(storage, "_bucket", lambda: bucket)
+    uid = client.get("/auth/me", headers=bearer(token)).json()["id"]
+
+    detailed = run(client, token, "detailed")
+    writer.prompts.clear()
+    paper_run = act(client, token, detailed["session_id"], "full")
+    assert paper_run["output_format"] == "full" and paper_run["research_question"] == QUESTION
+    assert paper_run["report"] is None  # no short answer in front of the paper
+    doc = paper_run["document"]
+    assert doc["status"] == "ready" and doc["current_version"] == 1 and doc["pdf_stored"] is True
+    # the generated original's PDF is rendered and kept in private storage when the paper is written
+    assert list(bucket.objects) == [f"{uid}/research-papers/{doc['id']}/v1.pdf"]
+    assert bucket.objects[f"{uid}/research-papers/{doc['id']}/v1.pdf"].startswith(b"%PDF")
+    with SessionLocal() as db:
+        d = db.get(models.ResearchDocument, doc["id"])
+        assert (d.pdf_version, d.current_version) == (1, 1)
+        versions = db.query(models.ResearchDocumentVersion).filter_by(document_id=doc["id"]).all()
+        assert [(v.version, v.source) for v in versions] == [(1, "generated")]
+    assert all(f"RESEARCH QUESTION: {QUESTION}\n" in p for p in writer.prompts[:6])  # the paper is about the question itself
+
+    # reopened and edited like any paper; the edit gets its own PDF
+    paper = client.get(f"/research/documents/{doc['id']}", headers=bearer(token)).json()
+    assert paper["content"]["question"] == QUESTION
+    edited = {**paper["content"], "title": "An Edited Title"}
+    saved = client.put(f"/research/documents/{doc['id']}", json={"content": edited, "base_version": 1}, headers=bearer(token)).json()
+    assert saved["current_version"] == 2 and saved["edited"] is True
+    assert client.get(f"/research/documents/{doc['id']}/pdf", headers=bearer(token)).status_code == 200
+    assert f"{uid}/research-papers/{doc['id']}/v2.pdf" in bucket.objects
+
+    threads = client.get("/research/threads", headers=bearer(token)).json()
+    t = next(x for x in threads if x["thread_id"] == detailed["thread_id"])
+    assert t["modes"] == ["detailed", "full"] and t["latest_mode"] == "full" and t["has_paper"] and t["paper_edited"]
+
+
+def test_output_format_reaches_the_backend_as_request_data(client, token, engine, writer):
+    for mode in ("quick", "detailed", "full"):
+        data = run(client, token, mode, question=f"{QUESTION} ({mode})")
+        with SessionLocal() as db:
+            assert db.get(models.ResearchSession, data["session_id"]).output_format == mode
+        assert data["output_format"] == mode
+    sessions = client.get("/research/sessions", headers=bearer(token)).json()
+    assert sorted(s["output_format"] for s in sessions) == ["detailed", "full", "quick"]
+    threads = client.get("/research/threads", headers=bearer(token)).json()
+    assert sorted(t["output_format"] for t in threads) == ["detailed", "full", "quick"]
+    # a mode action only accepts the user's own sessions
+    other = register(client, email="someone@example.com").json()["access_token"]
+    assert client.post("/research/runs", json={"based_on": sessions[0]["id"], "output_format": "full"},
+                       headers=bearer(other)).status_code == 404
+
+
+def test_a_run_reads_as_in_progress_until_its_answer_is_written(client, token, engine, writer, monkeypatch):
+    """The engine saves its own status and short answer first; nobody may see that as the result."""
+    seen = []
+    real = research_paper.write_detailed_analysis
+
+    def spy(question, result):
+        with SessionLocal() as db:
+            row = db.query(models.ResearchSession).order_by(models.ResearchSession.created_at.desc()).first()
+            seen.append(research_api.public_session(row, None))
+        return real(question, result)
+
+    monkeypatch.setattr(research_paper, "write_detailed_analysis", spy)
+    data = run(client, token, "detailed")
+    mid = seen[0]
+    assert mid["status"] == "in_progress" and mid["report"] is None and mid["output_format"] == "detailed"
+    assert mid["progress"]["finished_at"] is None
+    assert data["status"] != "in_progress" and data["progress"]["finished_at"]
+
+
+def test_working_flow_duration_comes_from_the_run_itself(client, token, engine, writer):
+    before = datetime.datetime.now(datetime.timezone.utc)
+    data = run(client, token, "quick")
+    after = datetime.datetime.now(datetime.timezone.utc)
+    p = data["progress"]
+    assert p["started_at"].endswith("Z") and p["finished_at"].endswith("Z")  # explicit UTC: no local-time shift
+    start = datetime.datetime.fromisoformat(p["started_at"].replace("Z", "+00:00"))
+    end = datetime.datetime.fromisoformat(p["finished_at"].replace("Z", "+00:00"))
+    assert before - datetime.timedelta(seconds=1) <= start <= end <= after + datetime.timedelta(seconds=1)
+    assert data["stats"]["duration_seconds"] == pytest.approx((end - start).total_seconds(), abs=0.2)
+    assert data["created_at"].endswith("Z") and data["updated_at"].endswith("Z")
+    # an old conversation date does not change a run's duration
+    with SessionLocal() as db:
+        row = db.get(models.ResearchSession, data["session_id"])
+        row.created_at = row.created_at - datetime.timedelta(days=3)
+        db.commit()
+    again = client.get(f"/research/runs/{data['session_id']}", headers=bearer(token)).json()
+    assert again["stats"]["duration_seconds"] == data["stats"]["duration_seconds"]
+    # a run without its own finish time shows no duration rather than a misleading one
+    assert research_api._run_seconds({"started_at": p["started_at"]}) is None
+
+
+ENGINE_STYLE_REPORT = """### Direct Answer
+Yes, evidence points to a replication crisis [E1][E3].
+
+### Core Verdict
+The evidence strongly supports the existence of a replication crisis. No counter-evidence was found for several hypotheses.
+
+### Findings by Hypothesis
+- **[H1] (insufficient) Studies suffer from low replication rates.** This hypothesis is supported by sources [E2].
+- **[H2] (untested) Methods improved.** Untested.
+
+### Limitations
+Several sources have lower weights (0.3). Large surveys may overstate the problem [E4]."""
+
+
+def test_saved_engine_style_answers_are_shown_without_internal_terms(client, token):
+    uid = client.get("/auth/me", headers=bearer(token)).json()["id"]
+    with SessionLocal() as db:
+        s = models.ResearchSession(user_id=uid, question="Is there a replication crisis in psychology?", title="x",
+                                   output_format="quick", status="ready", report=ENGINE_STYLE_REPORT,
+                                   hypotheses=[], evidence_log=[], critique={}, stats={})
+        db.add(s)
+        db.commit()
+        sid = s.id
+    report = client.get(f"/research/runs/{sid}", headers=bearer(token)).json()["report"]
+    assert report.startswith("### Answer\nYes, evidence points to a replication crisis [E1][E3].")
+    assert "Large surveys may overstate the problem [E4]." in report  # real content stays
+    for phrase in ("Core Verdict", "Findings by Hypothesis", "hypothes", "insufficient", "untested", "[H1]", "weights"):
+        assert phrase.lower() not in report.lower(), phrase
+
+
+def test_answers_written_for_the_reader_keep_topic_words(client, token, engine, writer, monkeypatch):
+    monkeypatch.setattr(research_paper, "write_quick_answer",
+                        lambda q, r: "The amyloid hypothesis remains contested [E1].\n\n## Key evidence\n- A trial found no benefit [E2].")
+    data = run(client, token, "quick")
+    assert "The amyloid hypothesis remains contested [E1]." in data["report"]  # a topic, not an internal label

@@ -56,6 +56,10 @@ export interface ChatMessage {
   startedAt?: number;
   /** The server's research run behind this answer (Working Flow, result, paper). */
   run?: import("./research-runs").ResearchRun;
+  /** The output mode requested, known before the server answers (for the label and Working Flow). */
+  mode?: OutputFormat;
+  /** A mode button's run: the question it re-runs, shown instead of a typed message. */
+  basedOnQuestion?: string;
 }
 
 export interface SessionSummary {

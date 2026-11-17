@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Check, ChevronDown, X } from "lucide-react";
 import { OutputFormat } from "@/lib/types";
-import { RunProgress, RunStatus, StageKey, stageStates } from "@/lib/research-runs";
+import { RunProgress, RunStatus, StageKey, runSeconds, stageStates } from "@/lib/research-runs";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,25 +26,28 @@ const PREPARING: Record<OutputFormat, string> = {
   full: "Writing the research paper",
 };
 
-const PAPER_STEP: Record<string, string> = {
+const STEP: Record<string, string> = {
+  writing: "",
   "paper:outline": "Planning the paper's structure",
-  "paper:introduction": "Drafting the introduction and methodology",
-  "paper:analysis": "Writing the analysis and findings",
-  "paper:conclusions": "Writing the discussion and conclusions",
+  "paper:introduction": "Writing the introduction and methodology",
+  "paper:background": "Writing the background and literature review",
+  "paper:analysis": "Writing the thematic analysis",
+  "paper:findings": "Writing the findings and comparative analysis",
+  "paper:conclusions": "Writing the discussion, gaps, limitations and conclusion",
   "paper:checking": "Checking each claim against its source",
+  "paper:pdf": "Preparing the PDF",
 };
 
-function useElapsed(since: string | null | undefined, until: string | null | undefined) {
-  const start = since ? Date.parse(since) : NaN;
-  const end = until ? Date.parse(until) : NaN;
+/** The run's own duration (start to finish, or to now while running); null when unknown. */
+function useRunSeconds(progress: RunProgress | null | undefined, status: RunStatus) {
   const [now, setNow] = useState(() => Date.now());
+  const running = status === "in_progress";
   useEffect(() => {
-    if (!Number.isNaN(end)) return;
+    if (!running) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [end]);
-  if (Number.isNaN(start)) return null;
-  return Math.max(0, Math.round(((Number.isNaN(end) ? now : end) - start) / 1000));
+  }, [running]);
+  return runSeconds(progress, status, now);
 }
 
 export function formatDuration(seconds: number) {
@@ -95,7 +98,7 @@ export function WorkingFlow({
 }) {
   const [open, setOpen] = useState(!collapsible);
   const stages = stageStates(progress, status);
-  const elapsed = useElapsed(progress?.started_at, progress?.finished_at);
+  const elapsed = useRunSeconds(progress, status);
   const failed = status === "failed";
   const failedAt = failed ? stages.find((s) => s.state === "in_progress")?.key ?? null : null;
   const doneCount = stages.filter((s) => s.state === "completed").length;
@@ -128,7 +131,7 @@ export function WorkingFlow({
             {stages.map(({ key, state }, i) => {
               const isFailed = failedAt === key;
               const label = key === "preparing" ? PREPARING[mode] ?? LABEL.preparing : LABEL[key];
-              const detail = key === "preparing" && state === "in_progress" && progress?.detail ? PAPER_STEP[progress.detail] : null;
+              const detail = key === "preparing" && state === "in_progress" && progress?.detail ? STEP[progress.detail] || null : null;
               return (
                 <li key={key} className="relative flex items-start gap-3 py-1.5">
                   {i < stages.length - 1 && (

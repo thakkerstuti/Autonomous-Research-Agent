@@ -62,10 +62,16 @@ class PaperAudit(BaseModel):
 
 
 class DetailedAnalysisModel(BaseModel):
-    markdown: str = ""
+    sections: list[PaperSectionModel] = Field(default_factory=list)
 
 
-GEMINI_SCHEMAS = [PaperOutline, PaperPart, PaperAudit, DetailedAnalysisModel]
+class QuickAnswerModel(BaseModel):
+    answer: str = ""  # the direct answer, one or two short paragraphs, cited
+    evidence: list[str] = Field(default_factory=list)  # key supporting evidence, each cited
+    caveats: list[str] = Field(default_factory=list)  # important caveats or uncertainty
+
+
+GEMINI_SCHEMAS = [PaperOutline, PaperPart, PaperAudit, DetailedAnalysisModel, QuickAnswerModel]
 
 
 def _call(prompt: str, schema):
@@ -189,27 +195,86 @@ EVIDENCE:
 {evidence_brief(result.get('evidence_log') or [])}"""
 
 
-# ───────── Detailed Analysis (chat) ─────────
+def _words(text: str) -> int:
+    return len(re.findall(r"\S+", text or ""))
 
-def write_detailed_analysis(question: str, result: dict) -> str:
-    prompt = f"""You are a senior research analyst writing an in-depth answer for a reader who wants more than a short reply but not a formal paper.
+
+# ───────── Quick Answer (chat) ─────────
+
+def write_quick_answer(question: str, result: dict) -> str:
+    """A direct answer, its key evidence and its caveats. No verdict labels, no hypotheses."""
+    prompt = f"""You are a careful research analyst answering a question briefly and precisely.
 
 {_context_block(question, result)}
 
-Write the Detailed Analysis in Markdown, about 700–1,100 words, with these parts (use ## headings, adapt the wording of the headings to the topic):
-- Overview: a direct, well-qualified answer to the question in two short paragraphs.
-- Key findings: the main findings, each explained and cited, with how strong the supporting evidence is.
-- Comparing the evidence: how different studies, approaches, populations or perspectives agree or differ, and why.
-- Where the evidence conflicts: only if sources genuinely disagree; explain likely reasons. Omit otherwise.
-- Implications: what follows for practice, policy or further work, phrased with appropriate caution.
-- Limitations and open questions: what the available evidence cannot settle.
+Return:
+- answer: the direct answer to the question in one or two short paragraphs (60–130 words), qualified to match the strength of the evidence, with citations.
+- evidence: 2–4 items, each one sentence stating a key piece of supporting evidence, with its citation.
+- caveats: 1–3 items, each one sentence on an important limitation, conflicting finding or uncertainty (with a citation where a source supports it).
+Keep the whole answer under 280 words. Do not add headings, verdict labels or status words such as "supported", "mixed" or "insufficient".
 
-{WRITING_RULES}
+{WRITING_RULES}"""
+    out: QuickAnswerModel = _call(prompt, QuickAnswerModel)
+    answer = (out.answer or "").strip()
+    if _words(answer) < 15:
+        raise ValueError("quick answer came back empty")
+    parts = [answer]
+    evidence = [e.strip().lstrip("-• ").strip() for e in out.evidence if e and e.strip()]
+    caveats = [c.strip().lstrip("-• ").strip() for c in out.caveats if c and c.strip()]
+    if evidence:
+        parts.append("## Key evidence\n" + "\n".join(f"- {e}" for e in evidence[:4]))
+    if caveats:
+        parts.append("## Caveats and uncertainty\n" + "\n".join(f"- {c}" for c in caveats[:3]))
+    return "\n\n".join(parts)
 
-Return the Markdown in the field 'markdown'."""
-    out: DetailedAnalysisModel = _call(prompt, DetailedAnalysisModel)
-    text = strip_internal_labels((out.markdown or "").strip())
-    if len(text) < 200:
+
+# ───────── Detailed Analysis (chat) ─────────
+
+DETAILED_MIN_WORDS = 1100
+
+
+def _detailed_prompt(question: str, result: dict, previous_words: int | None = None) -> str:
+    longer = (f"\nYOUR PREVIOUS DRAFT WAS ONLY {previous_words} WORDS. Write the full length: develop every section in several "
+              "substantive paragraphs, using the evidence above; do not pad or repeat.\n") if previous_words else ""
+    return f"""You are a senior research analyst writing an in-depth research discussion for a reader who wants a thorough, evidence-based understanding, presented in a chat (not a formal paper with a cover page or abstract).
+
+{_context_block(question, result)}
+{longer}
+Write 1,400–2,000 words as a list of sections. Each section has a 'heading' (adapted to the topic, not generic), 'level' (1 for a section, 2 for a subsection) and a 'body' of coherent paragraphs separated by blank lines. Cover, where the evidence allows:
+1. Introduction and background: the question, why it matters, and the context needed to follow the analysis (2 paragraphs).
+2. Thematic analysis: 2–4 themes drawn from the evidence, each as its own level-1 section with a descriptive heading, explained in depth with evidence from several sources.
+3. Key findings: the most important findings, how strong the evidence for each is, and the patterns across them.
+4. Comparing studies and perspectives: where studies, methods, populations or schools of thought agree or differ, and why.
+5. Evidence supporting and challenging the main conclusions: weigh both sides explicitly.
+6. Contradictions and possible explanations: only where sources genuinely conflict; explain likely reasons (population, measure, design, timeframe). Omit this section if there is no real conflict.
+7. Implications: for practice, policy, or further research, phrased with appropriate caution.
+8. Limitations: what the available evidence cannot establish.
+9. Overall synthesis: a closing integration of the analysis (not a repetition of earlier sections).
+Do not open with a one-line verdict, and do not use labels such as "Core Verdict", "Direct Answer" or "Quick Answer".
+
+{WRITING_RULES}"""
+
+
+def _sections_markdown(sections: list[PaperSectionModel]) -> str:
+    out = []
+    for s in sections:
+        heading = re.sub(r"^\s*(\d+(\.\d+)*\.?)\s+", "", (s.heading or "").strip()).strip("# ").strip()
+        body = (s.body or "").strip()
+        if not heading and not body:
+            continue
+        out.append(f"{'###' if s.level == 2 else '##'} {heading}\n\n{body}" if heading else body)
+    return "\n\n".join(out)
+
+
+def write_detailed_analysis(question: str, result: dict) -> str:
+    out: DetailedAnalysisModel = _call(_detailed_prompt(question, result), DetailedAnalysisModel)
+    text = _sections_markdown(out.sections)
+    if _words(text) < DETAILED_MIN_WORDS:  # one more attempt at the full length
+        retry: DetailedAnalysisModel = _call(_detailed_prompt(question, result, _words(text)), DetailedAnalysisModel)
+        longer = _sections_markdown(retry.sections)
+        if _words(longer) > _words(text):
+            text = longer
+    if _words(text) < 250:
         raise ValueError("detailed analysis came back empty")
     return text
 
@@ -220,6 +285,61 @@ def strip_internal_labels(text: str) -> str:
     text = re.sub(r"\(\s*H\d+(?:\s*[,;]\s*H\d+)*\s*\)", "", text)
     text = re.sub(r"\bH\d+:\s*", "", text)
     return text
+
+
+# The engine's own report formats (app.llm.write_report) are organised around its internal hypotheses.
+# New runs show answers written for the reader instead; this keeps older saved answers presentable too.
+_DROP_SECTIONS = re.compile(
+    r"^\s*(?:\d+\.\s*)?(?:core verdict|verdict|(?:detailed\s+)?findings by hypothesis|hypothes[ie]s(?: evaluated)?"
+    r"|methodology\s*(?:&|and)\s*hypothes[ie]s evaluated|evidence log summary|\[?H\d+\]?.*)\s*:?\s*$", re.I)
+_HEADING_RENAMES = [
+    (r"direct answer\s*(?:&|and)\s*executive summary|executive summary\s*(?:&|and)\s*direct answer", "Summary"),
+    (r"quick answer|direct answer", "Answer"),
+]
+_INTERNAL_SENTENCE = re.compile(r"\bhypothes[ie]s\b|\bweights?\s*\(?\s*(?:below\s*)?0?\.\d|\bevidence (?:log|IDs?)\b"
+                                r"|\bself-critique\b|\bsearch quer(?:y|ies)\b", re.I)
+
+
+def _drop_internal_sentences(paragraph: str) -> str:
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z\[*(])", paragraph)
+    kept = [s for s in sentences if not _INTERNAL_SENTENCE.search(s)]
+    return " ".join(kept)
+
+
+def clean_user_markdown(text: str, engine_text: bool = False) -> str:
+    """Nothing of the engine's internal structure in what a reader sees: no hypothesis IDs or status
+    labels. For text the engine itself wrote (engine_text: answers saved before this change, or a fallback),
+    also its hypothesis and verdict sections and any sentence about hypotheses or source weights. Answers
+    written for the reader keep their wording, since "hypothesis" can be the topic itself."""
+    text = strip_internal_labels(text or "")
+    if not engine_text:
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+    out, dropping_level = [], None
+    for line in text.split("\n"):
+        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if m:
+            level, heading = len(m.group(1)), m.group(2).strip()
+            if dropping_level is not None and level > dropping_level:
+                continue  # a subsection of a dropped section
+            dropping_level = None
+            if _DROP_SECTIONS.match(heading):
+                dropping_level = level
+                continue
+            for pattern, new in _HEADING_RENAMES:
+                if re.fullmatch(rf"\s*(?:\d+\.\s*)?(?:{pattern})\s*:?\s*", heading, flags=re.I):
+                    heading = new
+                    break
+            out.append(f"{m.group(1)} {heading}")
+            continue
+        if dropping_level is not None:
+            continue
+        line = re.sub(r"\(\s*(?:supported|refuted|mixed|insufficient|untested)\s*\)\s*", "", line, flags=re.I)
+        line = _drop_internal_sentences(line) if line.strip() else line
+        if line.strip() in ("-", "*", "**", "- **", "- ****"):
+            continue
+        out.append(line)
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+    return re.sub(r" +([.,;:])", r"\1", cleaned)
 
 
 # ───────── Full Research Paper ─────────
@@ -246,32 +366,36 @@ def _part_prompt(part: str, question: str, result: dict, outline: PaperOutline, 
                        for h in result.get("hypotheses") or [])
     refutes = any(e.get("stance") == "refutes" for e in result.get("evidence_log") or [])
     if part == "front":
-        spec = f"""Write these sections (level 1 unless noted):
-1. "Introduction" — background and context, the research problem, the objectives, the research questions this paper answers, and the scope. Use 2–4 level-2 subsections if that reads better than one long section (for example "Background and Context", "Research Problem and Objectives", "Research Questions and Scope").
-2. "Methodology" — describe the review method truthfully using ONLY these facts about how it was done (rewrite them as formal prose; do not add steps that did not happen, do not cite sources here):
+        spec = f"""Write these sections (word counts are targets for the section including its subsections):
+1. "Introduction" (level 1, 450–650 words) — a short opening paragraph, then level-2 subsections "Background and Context", "Research Problem and Objectives" and "Research Questions and Scope" (adapt the wording to the topic). State the objectives and the specific research questions this paper answers.
+2. "Methodology" (level 1, 350–500 words) — describe the review method truthfully using ONLY these facts about how it was done (rewrite them as formal prose; do not add steps that did not happen, do not cite sources here):
 {method_facts(result)}
-   Include the evidence evaluation criteria and the methodological limitations.
-3. "Background and Literature Review" — the existing research, important developments and relevant theory or technical background that the sources establish. Organise by idea, not by source. Cite."""
+   Cover the research approach, how sources were discovered and selected, the evidence evaluation criteria, and the methodological limitations, optionally as level-2 subsections."""
+    elif part == "background":
+        spec = """Write this section:
+1. "Background and Literature Review" (level 1, 500–800 words) — the existing research, important developments, and relevant theories, studies or technical background that the sources establish, organised by idea (2–3 level-2 subsections), not source by source. Cite throughout. Leave the detailed analysis of themes, findings and comparisons to later sections."""
     elif part == "analysis":
-        spec = f"""Write these sections:
-1. "Thematic Analysis" (level 1) with one level-2 subsection per theme:
+        spec = f"""Write this section:
+1. "Thematic Analysis" (level 1) — one or two sentences introducing the themes, then one level-2 subsection per theme (300–450 words each):
 {themes}
-   Explain each theme in depth across several paragraphs, connect evidence from multiple sources, and include the concrete examples, figures and comparisons the quotes contain.
-2. "Findings" (level 1) — the major findings stated precisely, each followed by the evidence that supports it and how strong that evidence is; then the important patterns across findings.
-3. "Comparative Analysis" (level 1) — alternative perspectives, different approaches, and differences across studies, methods, populations or results, with reasons where the evidence suggests them."""
+   Explain each theme in depth across several paragraphs, connect evidence from multiple sources, and include the concrete examples, figures and comparisons the quotes contain."""
+    elif part == "findings":
+        spec = """Write these sections:
+1. "Findings" (level 1, 400–600 words) — the major findings stated precisely, each followed by the evidence that supports it and how strong that evidence is; then the important patterns across findings. Level-2 subsections per major finding are welcome.
+2. "Comparative Analysis" (level 1, 350–500 words) — alternative perspectives, different approaches, and differences across studies, methods, populations or results, with reasons where the evidence suggests them."""
     else:
         conflict_rule = (
-            '1. "Contradictions and Conflicting Evidence" (level 1) — identify the genuinely conflicting evidence, explain possible reasons '
+            '1. "Contradictions and Conflicting Evidence" (level 1, 250–400 words) — identify the genuinely conflicting evidence, explain possible reasons '
             "(population, outcome measure, conditions, timeframe, study design), and say plainly where the question remains unresolved. Do not force agreement."
             if (has_conflict or refutes) else
             "1. No contradictions section: the review found no directly conflicting evidence. Mention this briefly in the Discussion instead."
         )
         spec = f"""Write these sections:
 {conflict_rule}
-2. "Discussion" (level 1) — interpret the findings, explain their significance, and discuss practical and theoretical implications.
-3. "Research Gaps and Future Directions" (level 1) — areas not sufficiently investigated, important unanswered questions, and concrete opportunities for further research.
-4. "Limitations" (level 1) — limitations of the available sources, of the data and method, and the uncertainty in the conclusions.
-5. "Conclusion" (level 1) — a synthesis of what the evidence supports; no new claims."""
+2. "Discussion" (level 1, 400–600 words) — interpret the findings, explain their significance, and discuss practical and theoretical implications (level-2 subsections welcome).
+3. "Research Gaps and Future Directions" (level 1, 250–350 words) — areas not sufficiently investigated, important unanswered questions, and concrete opportunities for further research.
+4. "Limitations" (level 1, 200–300 words) — limitations of the available sources, of the data and method, and the uncertainty in the conclusions.
+5. "Conclusion" (level 1, 200–300 words) — a synthesis of what the evidence supports; no new claims."""
     return f"""You are writing part of a formal research paper titled "{outline.title}".
 
 Abstract (already written, for context):
@@ -305,13 +429,17 @@ Return no corrections if the draft is sound. Do not rewrite for style. Ignore an
 
 
 def _sections_from(part: PaperPart) -> list[dict]:
+    raw = part.sections
     out = []
-    for s in part.sections:
+    for i, s in enumerate(raw):
         heading = re.sub(r"^\s*(\d+(\.\d+)*\.?)\s+", "", (s.heading or "").strip()).strip("# ").strip()
         body = (s.body or "").strip()
-        if not heading or len(body) < 40:
+        level = 2 if s.level == 2 else 1
+        # a section heading whose content is in the subsections that follow it is kept, even with little text
+        parent = level == 1 and i + 1 < len(raw) and raw[i + 1].level == 2 and len((raw[i + 1].body or "").strip()) >= 40
+        if not heading or (len(body) < 40 and not parent):
             continue  # no empty or placeholder sections
-        out.append({"heading": heading[:200], "level": 2 if s.level == 2 else 1, "body": body})
+        out.append({"heading": heading[:200], "level": level, "body": body})
     return out
 
 
@@ -423,6 +551,9 @@ def build_content(question: str, author: str | None, outline: PaperOutline, sect
     }
 
 
+PAPER_PARTS = ("front", "background", "analysis", "findings", "closing")
+
+
 def write_paper(question: str, result: dict, author: str | None = None, on_part=None) -> dict:
     """The full paper as JSON content. Raises if the writing fails; nothing partial is stored."""
     evidence = result.get("evidence_log") or []
@@ -441,7 +572,7 @@ def write_paper(question: str, result: dict, author: str | None = None, on_part=
     if not (outline.title and outline.abstract):
         raise ValueError("paper outline came back empty")
     sections: list[dict] = []
-    for part in ("front", "analysis", "closing"):
+    for part in PAPER_PARTS:
         step(part)
         written = _sections_from(_call(_part_prompt(part, question, result, outline,
                                                     [PaperSectionModel(**s) for s in sections]), PaperPart))

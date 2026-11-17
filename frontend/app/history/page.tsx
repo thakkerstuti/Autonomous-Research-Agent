@@ -82,8 +82,8 @@ function ResearchMeta({ t }: { t: ThreadSummary }) {
   return (
     <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-ink-faint">
       <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-      <span>{MODE_LABEL[t.output_format] ?? "Research"}</span>
-      {t.turns > 1 && <span>· {t.turns} questions</span>}
+      <span>{(t.modes?.length ? t.modes : [t.output_format]).map((m) => MODE_LABEL[m] ?? m).join(" · ")}</span>
+      {t.turns > 1 && <span>· {t.turns} runs</span>}
       {t.has_paper && (
         <span className="inline-flex items-center gap-1 text-ink-soft">
           · <FileText size={12} /> Paper{t.paper_edited ? " · edited" : ""}

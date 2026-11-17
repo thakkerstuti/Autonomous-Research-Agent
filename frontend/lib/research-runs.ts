@@ -7,8 +7,9 @@ import { ApiError } from "./api-error";
 import { getAccessToken, recoverFromUnauthorized } from "./auth";
 import { OutputFormat } from "./types";
 import type { RunProgress, RunStatus } from "./run-stages";
+import { runRequestBody } from "./mode-intent";
 
-export { STAGE_ORDER, stageStates } from "./run-stages";
+export { STAGE_ORDER, stageStates, runSeconds, parseServerTime } from "./run-stages";
 export type { RunProgress, RunStatus, StageKey, StageState } from "./run-stages";
 
 export interface DocumentSummary {
@@ -18,6 +19,7 @@ export interface DocumentSummary {
   error: string | null;
   current_version: number;
   edited: boolean;
+  pdf_stored?: boolean;
   updated_at: string | null;
 }
 
@@ -39,10 +41,12 @@ export interface ResearchRun {
   thread_id: string;
   research_question: string;
   output_format: OutputFormat;
+  /** Set when this run is another mode of an earlier question (the answer's mode buttons). */
+  based_on: string | null;
   status: RunStatus;
   progress: RunProgress;
+  /** The answer for Quick and Detailed; null for a Research paper turn, whose result is the document. */
   report: string | null;
-  summary: string | null;
   note: string | null;
   error: string | null;
   needs_review: boolean;
@@ -58,6 +62,7 @@ export interface ThreadSummary {
   title: string;
   output_format: OutputFormat;
   modes: OutputFormat[];
+  latest_mode: OutputFormat;
   created_at: string | null;
   updated_at: string | null;
   turns: number;
@@ -114,10 +119,18 @@ export const MODE_LABEL: Record<OutputFormat, string> = {
 
 export const isFinished = (s: RunStatus) => s !== "in_progress";
 
+/** A new question (optionally a follow-up in a conversation). */
 export const startRun = (question: string, output_format: OutputFormat, thread_id?: string | null) =>
   apiClient<ResearchRun>("/research/runs", {
     method: "POST",
-    body: JSON.stringify({ question, output_format, ...(thread_id ? { thread_id } : {}) }),
+    body: JSON.stringify(runRequestBody(output_format, { question, thread_id })),
+  });
+
+/** The same question again in another mode (Detailed analysis, Research paper); the server takes the question from that session. */
+export const startModeRun = (basedOn: string, output_format: OutputFormat) =>
+  apiClient<ResearchRun>("/research/runs", {
+    method: "POST",
+    body: JSON.stringify(runRequestBody(output_format, { based_on: basedOn })),
   });
 
 export const getRun = (sessionId: string) => apiClient<ResearchRun>(`/research/runs/${sessionId}`);
