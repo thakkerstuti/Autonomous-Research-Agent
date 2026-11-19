@@ -608,6 +608,96 @@ def _mock_paper(question: str, result: dict, author: str | None) -> dict:
     return build_content(question, author, outline, sections, result.get("evidence_log") or [], {"mock": True})
 
 
+# ───────── adding a chat answer to the paper ─────────
+
+def _chat_markdown_to_body(text: str) -> str:
+    """A chat answer's Markdown in the paper's body format (paragraphs, "- " lists, **bold**, *italic*)."""
+    out = []
+    in_code = False
+    for line in (text or "").replace("\r\n", "\n").split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue  # code fences: the code is kept as plain lines
+        if not in_code:
+            m = re.match(r"^#{1,6}\s+(.*)$", stripped)
+            if m:
+                out += ["", f"**{m.group(1).strip().strip('*')}**", ""]  # a heading inside the answer: a bold line
+                continue
+            if re.match(r"^\|?\s*:?-{3,}", stripped):
+                continue  # Markdown table divider row
+            if stripped.startswith("|") and stripped.endswith("|"):
+                out.append("- " + " · ".join(c.strip() for c in stripped.strip("|").split("|")))  # a table row: a list item
+                continue
+            line = re.sub(r"^\s*(?:\d+[.)]|[*+])\s+", "- ", line)  # numbered and * lists: the paper's "- " items
+        out.append(line.rstrip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
+def append_chat_section(content: dict, question: str, answer: str, sources: list[dict], answered_at: str,
+                        message_id: str, evidence: list[dict] | None = None) -> tuple[dict, dict]:
+    """The paper with a chat answer appended as a new last section "Follow-up: {question}".
+
+    Existing sections are untouched. The answer's [n] citations (numbered against the sources saved
+    with that answer) are renumbered to the paper's reference list: a source already in the paper (same
+    URL) reuses its number; any other cited source is added as a new reference with its real URL and the
+    date it was retrieved (the research run's retrieval date for research sources, the answer's date for
+    web sources), marked as added from chat. Numbers not among the answer's saved sources are removed.
+    Nothing is invented. Returns the new content and a summary of what changed.
+    """
+    refs = [dict(r) for r in content.get("references") or []]
+    by_url = {(r.get("url") or "").split("#")[0].rstrip("/").lower(): r["n"] for r in refs if r.get("url")}
+    retrieved = {(e.get("source_url") or "").split("#")[0].rstrip("/").lower(): (e.get("retrieved_at") or "")[:10]
+                 for e in (evidence or []) if e.get("source_url")}
+    saved = {int(s["n"]): s for s in sources or [] if isinstance(s, dict) and str(s.get("n", "")).isdigit() and s.get("url")}
+    mapping: dict[int, int] = {}
+    reused, added = [], []
+    next_n = max([r.get("n", 0) for r in refs] or [0]) + 1
+
+    def paper_number(n: int) -> int | None:
+        nonlocal next_n
+        if n in mapping:
+            return mapping[n]
+        s = saved.get(n)
+        if not s:
+            return None
+        url = s["url"]
+        key = url.split("#")[0].rstrip("/").lower()
+        if key in by_url:
+            mapping[n] = by_url[key]
+            reused.append(by_url[key])
+            return mapping[n]
+        origin = "web" if s.get("origin") == "web" else "research"
+        accessed = (answered_at or "")[:10] if origin == "web" else (retrieved.get(key) or (answered_at or "")[:10])
+        ref = {"n": next_n, "title": _one_line(s.get("title") or _domain(url), 300), "site": _site_name(_domain(url)),
+               "url": url.split("#:~:text=")[0], "accessed": accessed, "source_type": "web" if origin == "web" else "",
+               "evidence_ids": [], "added_from": "chat"}
+        refs.append(ref)
+        by_url[key] = next_n
+        mapping[n] = next_n
+        added.append(next_n)
+        next_n += 1
+        return mapping[n]
+
+    def renumber(m: re.Match) -> str:
+        nums = []
+        for x in re.findall(r"\d+", m.group(1)):
+            p = paper_number(int(x))
+            if p is not None and p not in nums:
+                nums.append(p)
+        return f"[{', '.join(str(n) for n in sorted(nums))}]" if nums else ""
+
+    body = re.sub(r"\[(\s*\d+(?:\s*[,;]\s*\d+)*\s*)\]", renumber, _chat_markdown_to_body(answer))
+    body = re.sub(r"[ \t]+([.,;:!?])", r"\1", merge_adjacent_citations(body))
+    body = re.sub(r"(?<=\S)[ \t]{2,}", " ", body).strip()  # "number [9] is" -> "number is", not a double space
+    heading = _one_line(f"Follow-up: {' '.join((question or '').split())}", 280)
+    new = dict(content)
+    new["sections"] = list(content.get("sections") or []) + [{"id": _section_id(), "level": 1, "heading": heading, "body": body}]
+    new["references"] = refs
+    new["chat_appends"] = list(content.get("chat_appends") or []) + [message_id]
+    return new, {"references_reused": sorted(set(reused)), "references_added": added}
+
+
 # ───────── validating content saved by the editor ─────────
 
 MAX_CONTENT_CHARS = 400_000
@@ -648,7 +738,7 @@ def clean_content(content: dict, previous: dict) -> dict:
     if not isinstance(keywords, list):
         raise ContentError("'keywords' must be a list.")
     out = {
-        **{k: previous.get(k) for k in ("schema", "question", "references", "checks")},
+        **{k: previous.get(k) for k in ("schema", "question", "references", "checks", "chat_appends")},
         "title": text(content.get("title"), 300, "title").strip() or previous.get("title", ""),
         "author": text(content.get("author"), 200, "author").strip(),
         "date": text(content.get("date"), 40, "date").strip() or previous.get("date", ""),

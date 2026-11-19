@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, UniqueConstraint, Boolean, ForeignKey
+from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, UniqueConstraint, Boolean, ForeignKey, Index
 from app.database import Base
 import uuid
 
@@ -91,6 +91,20 @@ class ResearchDocumentVersion(Base):
     content = Column(JSON, nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     __table_args__ = (UniqueConstraint("document_id", "version", name="uix_research_document_version"),)
+
+
+class ChatMessage(Base):
+    """One message in the follow-up chat of a research session (its own conversation, per session)."""
+    __tablename__ = "chat_messages"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    session_id = Column(String, ForeignKey("research_sessions.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    role = Column(String(16), nullable=False)  # user, assistant
+    content = Column(Text, nullable=False)
+    sources = Column(JSON, nullable=True)  # assistant: the numbered sources its [n] citations point to
+    used_web_search = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    __table_args__ = (Index("ix_chat_messages_session_created", "session_id", "created_at"),)
 
 
 

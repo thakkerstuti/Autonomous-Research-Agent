@@ -3,11 +3,12 @@
 import { Fragment, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  AlertCircle, ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, Download, Eye, History, Loader2, PenLine, Plus, Trash2,
+  AlertCircle, ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, Download, Eye, History, Loader2, MessageSquare, PenLine, Plus, Trash2,
 } from "lucide-react";
-import { PaperContent, PaperSection, ResearchDocument, downloadPaperPdf, getDocument, saveDocument } from "@/lib/research-runs";
+import { PaperContent, PaperSection, ResearchDocument, VERSION_LABEL, downloadPaperPdf, getDocument, saveDocument } from "@/lib/research-runs";
 import { numberSections, paperWordCount, splitBlocks, splitInline } from "@/lib/paper-format";
 import { cn } from "@/lib/utils";
+import { ConversationPanel } from "./conversation-panel";
 
 /* ───────────── small pieces ───────────── */
 
@@ -131,6 +132,9 @@ function References({ content }: { content: PaperContent }) {
                 <>Available at: <a href={r.url} target="_blank" rel="noopener noreferrer" className="break-all text-accent hover:underline">{r.url}</a></>
               )}
               {r.accessed && <span className="text-ink-soft"> (accessed {longDate(r.accessed)})</span>}.
+              {r.added_from === "chat" && (
+                <span className="ml-1.5 whitespace-nowrap rounded-full bg-surface3 px-1.5 py-0.5 font-sans text-[11px] text-ink-faint">added from chat</span>
+              )}
             </span>
           </li>
         ))}
@@ -362,6 +366,7 @@ export function PaperWorkspace({ documentId }: { documentId: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false); // the research conversation, beside the paper
   const [viewing, setViewing] = useState<ResearchDocument | null>(null); // an older version, read-only
 
   const load = useCallback(async () => {
@@ -529,6 +534,17 @@ export function PaperWorkspace({ documentId }: { documentId: string }) {
           ))}
         </div>
 
+        {doc.thread_id && (
+          <button
+            onClick={() => setChatOpen((o) => !o)}
+            aria-pressed={chatOpen}
+            className={cn("pressable inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[12.5px] font-medium hover:bg-surface2 hover:text-ink",
+              chatOpen ? "bg-surface2 text-ink" : "text-ink-soft")}
+          >
+            <MessageSquare size={14} /> <span className="hidden md:inline">Conversation</span>
+          </button>
+        )}
+
         <div className="relative">
           <button
             onClick={() => setVersionsOpen((o) => !o)}
@@ -548,7 +564,7 @@ export function PaperWorkspace({ documentId }: { documentId: string }) {
                   >
                     <span>
                       <span className="mono text-[11.5px] text-ink-faint">v{v.version}</span>{" "}
-                      {v.source === "generated" ? "Generated" : "Your edit"}
+                      {VERSION_LABEL[v.source] ?? "Your edit"}
                       {v.version === doc.current_version && <span className="text-ink-faint"> · latest</span>}
                     </span>
                     <span className="text-[11.5px] text-ink-faint">{shortTime(v.created_at)}</span>
@@ -581,7 +597,7 @@ export function PaperWorkspace({ documentId }: { documentId: string }) {
       {viewing?.content && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line bg-accent-soft px-4 py-2.5 text-[13px] text-ink sm:px-6">
           <span>
-            Viewing <span className="mono">v{viewing.version}</span> ({viewing.versions.find((v) => v.version === viewing.version)?.source === "generated" ? "generated" : "your edit"}). Read-only.
+            Viewing <span className="mono">v{viewing.version}</span> ({(VERSION_LABEL[viewing.versions.find((v) => v.version === viewing.version)?.source ?? "edit"] ?? "Your edit").toLowerCase()}). Read-only.
           </span>
           <button
             onClick={() => {
@@ -597,11 +613,27 @@ export function PaperWorkspace({ documentId }: { documentId: string }) {
         </div>
       )}
 
+      <div className="flex min-h-0 flex-1">
       <div className="min-h-0 flex-1 overflow-y-auto bg-desk/60 px-3 py-8 sm:px-8 sm:py-12">
         {viewing?.content ? <Preview content={viewing.content} /> : mode === "preview" ? <Preview content={draft} /> : <Editor draft={draft} setDraft={setDraft} />}
         <p className="mono mx-auto mt-6 max-w-[820px] text-center text-[11.5px] text-ink-faint">
           {words.toLocaleString()} words · {draft.sections.filter((s) => s.level === 1).length} sections · {draft.references.length} references
         </p>
+      </div>
+      {chatOpen && doc.thread_id && (
+        // Beside the paper on wide screens; over it on narrow ones
+        <div className="fixed inset-0 z-40 flex sm:static sm:z-auto sm:w-[400px] sm:flex-shrink-0 sm:border-l sm:border-line xl:w-[440px]">
+          <ConversationPanel
+            threadId={doc.thread_id}
+            sessionId={doc.session_id}
+            onClose={() => setChatOpen(false)}
+            documentId={doc.id}
+            // Adding creates a new version: unsaved edits would otherwise be lost when the paper reloads
+            beforeAdd={() => (dirty ? "Save your edits first, then add this answer." : viewing ? "Go back to the latest version first." : null)}
+            onAdded={() => void load()}
+          />
+        </div>
+      )}
       </div>
     </div>
   );

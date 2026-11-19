@@ -14,8 +14,11 @@ import { PaperCard } from "@/components/research/paper-card";
 import { cn } from "@/lib/utils";
 import { readWorkspace, updateWorkspace } from "@/lib/workspace";
 import { queryClient } from "@/lib/query-client";
-import { MODE_LABEL, ResearchRun, getRun, getThread, startModeRun, startRun } from "@/lib/research-runs";
+import { MODE_LABEL, ResearchDocument, ResearchRun, getRun, getThread, getThreadMessages, startModeRun, startRun, streamChat } from "@/lib/research-runs";
 import { modeCommand } from "@/lib/mode-intent";
+import { ChatMessageDto, mergeTimeline } from "@/lib/chat-stream";
+import { AddToPaperButton, ChatError, ChatMarkdown, ChatSources } from "@/components/research/chat-answer";
+import type { ComposerMode } from "@/components/research/composer";
 
 const CHIPS = [
   "Does AI actually help developers work faster?",
@@ -173,6 +176,61 @@ function ModeActions({ run, busy, onAction }: { run: ResearchRun; busy: boolean;
   );
 }
 
+/** One chat exchange in the conversation: the question, then the answer as it streams. */
+function ChatEntry({ entry, onRetry, busy, paper, onAddedToPaper }: {
+  entry: EntryData;
+  onRetry: (entry: EntryData) => void;
+  busy: boolean;
+  /** The ready research paper of this answer's session, if there is one ("Add to paper"). */
+  paper?: { id: string } | null;
+  onAddedToPaper?: (sessionId: string, doc: ResearchDocument) => void;
+}) {
+  const { q, a } = entry;
+  const chat = a?.chat;
+  const working = a?.status === "pending" || a?.status === "streaming";
+  const text = a?.answer ?? "";
+  return (
+    <article className="flex scroll-mt-6 flex-col gap-6">
+      <div className="animate-msg-in ml-auto max-w-[min(85%,600px)] whitespace-pre-wrap rounded-[20px] bg-surface3 px-4 py-2.5 text-[15.5px] leading-relaxed text-ink">
+        {q.text}
+      </div>
+      <div className="flex gap-3.5">
+        <ThinkingMark active={working} className="mt-[3px]" />
+        <div className="min-w-0 flex-1" aria-live="polite" aria-busy={working}>
+          {chat?.error ? (
+            <ChatError message={chat.error} onRetry={() => onRetry(entry)} busy={busy} />
+          ) : (
+            <>
+              {working && !text && (
+                <p className="flex items-center gap-2 text-[15px] text-ink-soft">
+                  <span className="thinking-text">{chat?.stageLabel || "Thinking"}</span>
+                </p>
+              )}
+              {text && <ChatMarkdown text={text} sources={chat?.sources ?? []} />}
+              {working && text && chat?.stageLabel === "Searching the web" && (
+                <p className="mt-2 text-[13px] text-ink-faint">Searching the web…</p>
+              )}
+              {!working && chat && (
+                <div className="mt-2 flex flex-wrap items-start gap-x-4">
+                  <CopyButton text={text} />
+                  {paper && chat.messageId && text && (
+                    <AddToPaperButton
+                      documentId={paper.id}
+                      messageId={chat.messageId}
+                      onAdded={(doc) => onAddedToPaper?.(chat.sessionId, doc)}
+                    />
+                  )}
+                  <ChatSources sources={chat.sources} usedWebSearch={chat.usedWebSearch} />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function Entry({ entry, onRetry, onAction, busy }: {
   entry: EntryData;
   onRetry: (q: string, format?: OutputFormat, basedOn?: string | null) => void;
@@ -325,11 +383,28 @@ function follow(sessionId: string) {
   pollers.set(sessionId, setTimeout(tick, 1200));
 }
 
+/** A saved chat exchange as the two messages the page shows. */
+function chatTurnMessages(user: ChatMessageDto, answer: ChatMessageDto | null): ChatMessage[] {
+  const sessionId = user.session_id ?? answer?.session_id ?? "";
+  return [
+    { id: `cq-${user.id}`, role: "user", text: user.content, status: "done", chat: { sessionId, sources: [], usedWebSearch: false, createdAt: user.created_at } },
+    {
+      id: `ca-${user.id}`, role: "assistant", status: "done", answer: answer?.content ?? "",
+      chat: answer
+        ? { sessionId, sources: answer.sources ?? [], usedWebSearch: answer.used_web_search, createdAt: answer.created_at, messageId: answer.id }
+        : { sessionId, sources: [], usedWebSearch: false, error: "This question wasn't answered." },
+    },
+  ];
+}
+
+/** The whole conversation: research runs and chat exchanges, in the order they happened. */
 async function loadThread(threadId: string): Promise<ChatMessage[] | null> {
-  const thread = await getThread(threadId);
+  const [thread, messages] = await Promise.all([getThread(threadId), getThreadMessages(threadId).catch(() => [] as ChatMessageDto[])]);
   if (!thread?.turns?.length) return null;
   thread.turns.filter((t) => t.status === "in_progress").forEach((t) => follow(t.session_id));
-  return thread.turns.flatMap(turnMessages);
+  return mergeTimeline(thread.turns, messages).flatMap((item) =>
+    item.kind === "run" ? turnMessages(item.run) : chatTurnMessages(item.user, item.answer)
+  );
 }
 
 /* ───────────── Page ───────────── */
@@ -344,9 +419,10 @@ function ResearchPage() {
   const { chatHistories, appendMessage, updateMessage, resetHistory } = useUiStore();
   const messages = chatHistories["research"];
   const [sending, setSending] = useState(false);
-  const inFlight = messages.some((m) => m.role === "assistant" && m.status === "pending");
+  const inFlight = messages.some((m) => m.role === "assistant" && (m.status === "pending" || m.status === "streaming"));
   const busy = sending || inFlight;
-  const [outputFormat, setOutputFormat] = useState<OutputFormat>("detailed");
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>("detailed"); // the depth for new research runs
+  const [composerMode, setComposerMode] = useState<ComposerMode>("chat");
   const [loadError, setLoadError] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -355,15 +431,53 @@ function ResearchPage() {
     () => messages.find((m) => m.role === "assistant" && m.run?.thread_id)?.run?.thread_id ?? null,
     [messages]
   );
+  // The research the chat continues from: the conversation's latest finished run
+  const anchorId = useMemo(() => {
+    const runs = messages.map((m) => m.run).filter((r): r is ResearchRun => !!r);
+    return [...runs].reverse().find((r) => r.status !== "in_progress" && r.status !== "failed")?.session_id ?? null;
+  }, [messages]);
+  const chatAvailable = !!anchorId;
+  // Research runs with a ready paper: their chat answers can be added to it
+  const papersBySession = useMemo(() => {
+    const out = new Map<string, { id: string }>();
+    messages.forEach((m) => {
+      const doc = m.run?.document;
+      if (m.run && doc && doc.status === "ready") out.set(m.run.session_id, { id: doc.id });
+    });
+    return out;
+  }, [messages]);
+
+  /** After "Add to paper": the run's paper card shows the new version (the conversation stays where it is). */
+  function paperUpdated(sessionId: string, doc: ResearchDocument) {
+    const holder = useUiStore.getState().chatHistories.research.find((m) => m.run?.session_id === sessionId && m.run.document);
+    if (!holder?.run?.document) return;
+    updateMessage("research", holder.id, {
+      run: { ...holder.run, document: { ...holder.run.document, current_version: doc.current_version, edited: doc.edited, updated_at: doc.updated_at } },
+    });
+  }
+  // Before the first research result the composer starts research; afterwards it chats by default
+  const mode: ComposerMode = chatAvailable ? composerMode : composerMode === "chat" ? outputFormat : composerMode;
 
   useEffect(() => {
     const saved = readWorkspace().research?.format;
     if (saved && FORMATS.includes(saved as OutputFormat)) setOutputFormat(saved as OutputFormat);
   }, []);
 
+  // When a conversation gets its first research result, the composer switches to chatting about it
+  const hadAnchor = useRef(false);
+  useEffect(() => {
+    if (chatAvailable && !hadAnchor.current) setComposerMode("chat");
+    hadAnchor.current = chatAvailable;
+  }, [chatAvailable]);
+
   function chooseFormat(f: OutputFormat) {
     setOutputFormat(f);
     updateWorkspace((w) => ({ ...w, research: { ...(w.research ?? {}), format: f } }));
+  }
+
+  function chooseMode(m: ComposerMode) {
+    setComposerMode(m);
+    if (m !== "chat") chooseFormat(m);
   }
 
   // Pair each question with its answer
@@ -491,17 +605,70 @@ function ResearchPage() {
     void start(format, { basedOn, question: turn?.research_question ?? "" });
   }
 
-  /** The composer: a new question, a follow-up, or a typed mode instruction about the last question. */
-  function send(text: string, format: OutputFormat = outputFormat, basedOn?: string | null) {
+  /**
+   * A chat message in the conversation, answered by streaming. With `reuse`, an earlier failed
+   * exchange is answered again in place (nothing was saved for it).
+   */
+  async function sendChat(text: string, sessionId: string, reuse?: { qId: string; aId: string }) {
+    if (busy) return;
+    setLoadError(null);
+    const tempId = crypto.randomUUID();
+    const qId = reuse?.qId ?? `cq-${tempId}`;
+    const aId = reuse?.aId ?? `ca-${tempId}`;
+    const fresh = { sessionId, sources: [], usedWebSearch: false, stageLabel: "Understanding your question" };
+    if (reuse) {
+      updateMessage("research", aId, { status: "pending", answer: "", chat: fresh });
+    } else {
+      appendMessage("research", { id: qId, role: "user", text, status: "done", chat: { sessionId, sources: [], usedWebSearch: false } });
+      appendMessage("research", { id: aId, role: "assistant", status: "pending", answer: "", chat: fresh, startedAt: Date.now() });
+    }
+    const patchChat = (patch: Partial<NonNullable<ChatMessage["chat"]>>, more: Partial<ChatMessage> = {}) => {
+      const current = useUiStore.getState().chatHistories.research.find((m) => m.id === aId);
+      updateMessage("research", aId, { ...more, chat: { ...(current?.chat ?? fresh), ...patch } });
+    };
+    let streamed = "";
+    try {
+      const result = await streamChat(sessionId, text, {
+        onStatus: (_stage, label) => patchChat({ stageLabel: label }),
+        onSources: (sources, usedWebSearch) => patchChat({ sources, usedWebSearch }),
+        onDelta: (piece) => {
+          streamed += piece;
+          updateMessage("research", aId, { status: "streaming", answer: streamed });
+        },
+      });
+      // The saved answer is the final word (citations checked once more on the server)
+      patchChat(
+        { sources: result.answer.sources ?? [], usedWebSearch: result.answer.used_web_search, stageLabel: undefined, createdAt: result.answer.created_at, messageId: result.answer.id },
+        { status: "done", answer: result.answer.content }
+      );
+    } catch (err: any) {
+      patchChat({ error: err?.message || "The answer couldn't be completed. Please try again.", stageLabel: undefined }, { status: "done", answer: "" });
+    }
+  }
+
+  function retryChat(entry: EntryData) {
+    if (!entry.a?.chat || !entry.q.text) return;
+    void sendChat(entry.q.text, entry.a.chat.sessionId, { qId: entry.q.id, aId: entry.a.id });
+  }
+
+  /**
+   * The composer. In Chat mode (once the conversation has a research result) a message continues the
+   * conversation: follow-ups, references to earlier answers and new topics alike. A typed instruction
+   * such as "give detailed analysis" is a structured mode request for the last question. In a research
+   * mode, the message starts a new research run in the same conversation.
+   */
+  function send(text: string, format?: ComposerMode, basedOn?: string | null) {
     if (!text.trim() || busy) return;
-    if (basedOn) return runMode(basedOn, format); // "Try again" on a mode run
+    const chosen = format ?? mode;
+    if (basedOn) return runMode(basedOn, chosen === "chat" ? outputFormat : chosen); // "Try again" on a mode run
     const command = modeCommand(text);
     const last = latestQuestionTurn();
     if (command && last) {
       chooseFormat(command);
       return runMode(last.based_on ?? last.session_id, command);
     }
-    void start(format, { text });
+    if (chosen === "chat" && anchorId) return void sendChat(text.trim(), anchorId);
+    void start(chosen === "chat" ? outputFormat : chosen, { text });
   }
 
   // A question handed over from the dashboard is asked once, then removed from the URL.
@@ -553,9 +720,20 @@ function ResearchPage() {
           <EmptyState onPick={(t) => send(t)} />
         ) : (
           <div className="mx-auto flex max-w-[760px] flex-col gap-12 px-5 pb-16 pt-10 sm:px-8">
-            {entries.map((e) => (
-              <Entry key={e.q.id} entry={e} busy={busy} onRetry={send} onAction={runMode} />
-            ))}
+            {entries.map((e) =>
+              e.a?.chat || e.q.chat ? (
+                <ChatEntry
+                  key={e.q.id}
+                  entry={e}
+                  busy={busy}
+                  onRetry={retryChat}
+                  paper={e.a?.chat ? papersBySession.get(e.a.chat.sessionId) : null}
+                  onAddedToPaper={paperUpdated}
+                />
+              ) : (
+                <Entry key={e.q.id} entry={e} busy={busy} onRetry={send} onAction={runMode} />
+              )
+            )}
           </div>
         )}
       </div>
@@ -563,12 +741,17 @@ function ResearchPage() {
       <div className="px-4 pb-4 pt-2 sm:px-8 sm:pb-6">
         <div className="mx-auto max-w-[760px]">
           <Composer
-            placeholder={hasMessages ? "Ask a follow-up question" : "Ask an open research question"}
+            placeholder={
+              !hasMessages ? "Ask an open research question"
+              : mode === "chat" ? "Ask a follow-up, or start a new topic"
+              : "Ask a new research question"
+            }
             disabled={busy}
             busy={busy}
             onSend={(t) => send(t)}
-            format={outputFormat}
-            onFormatChange={chooseFormat}
+            format={mode}
+            onFormatChange={chooseMode}
+            allowChat={chatAvailable}
           />
         </div>
       </div>

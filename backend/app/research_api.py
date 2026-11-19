@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, load_only
 
 from app import models, research_paper, research_pdf, storage
@@ -331,9 +332,14 @@ def _doc_summary(doc: models.ResearchDocument | None) -> dict | None:
         "error": doc.error,
         "current_version": doc.current_version,
         "edited": bool(doc.edited),
-        "pdf_stored": bool(doc.pdf_path),
+        "pdf_stored": _pdf_is_current(doc),
         "updated_at": _utc(doc.updated_at),
     }
+
+
+def _pdf_is_current(doc: models.ResearchDocument) -> bool:
+    """A stored PDF counts only if it is of the latest version (each version has its own file)."""
+    return bool(doc.pdf_path) and doc.pdf_version == doc.current_version
 
 
 def _run_seconds(progress: dict) -> float | None:
@@ -575,7 +581,7 @@ def _document_payload(db: Session, doc: models.ResearchDocument, version: int | 
         "thread_id": (session.thread_id or session.id) if session else None,
         "version": row.version if row else None,
         "content": row.content if row else None,
-        "pdf": {"version": doc.pdf_version, "stored": bool(doc.pdf_path)},
+        "pdf": {"version": doc.pdf_version, "stored": _pdf_is_current(doc)},
         "versions": [{"version": v.version, "source": v.source,
                       "created_at": _utc(v.created_at)} for v in versions],
     }
@@ -613,6 +619,63 @@ def save_document(document_id: str, body: SaveRequest, db: Session = Depends(get
     db.commit()
     log.info("paper saved doc=%s version=%d", doc.id, version)
     return _document_payload(db, doc)
+
+
+class AppendChatRequest(BaseModel):
+    message_id: str  # the assistant answer to add; its question and sources are read from the database
+    base_version: int
+
+
+@router.post("/documents/{document_id}/append-chat")
+def append_chat(document_id: str, body: AppendChatRequest, db: Session = Depends(get_db),
+                user: models.User = Depends(get_current_user)):
+    """Add a chat answer (and the question it answers) to the paper as a new last section, as a new version.
+
+    Everything comes from the database: the answer must be this user's, from this paper's research
+    session, and directly answer the question before it. Adding the same answer again returns the
+    paper unchanged (already_added), so a retried request never appends twice.
+    """
+    doc = _owned_document(db, document_id, user)
+    session = db.get(models.ResearchSession, doc.session_id)
+    if not session or session.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Research paper not found")
+    if doc.status != "ready" or not doc.current_version:
+        raise HTTPException(status_code=409, detail="This paper isn't ready yet.")
+
+    answer = db.query(models.ChatMessage).filter(
+        models.ChatMessage.id == body.message_id, models.ChatMessage.user_id == user.id,
+        models.ChatMessage.session_id == session.id, models.ChatMessage.role == "assistant").first()
+    if not answer:
+        raise HTTPException(status_code=404, detail="That answer isn't part of this paper's conversation.")
+    previous = (db.query(models.ChatMessage)
+                .filter(models.ChatMessage.session_id == session.id, models.ChatMessage.user_id == user.id,
+                        models.ChatMessage.created_at < answer.created_at)
+                .order_by(models.ChatMessage.created_at.desc())
+                .first())
+    if not previous or previous.role != "user":
+        raise HTTPException(status_code=409, detail="This answer has no matching question, so it can't be added.")
+
+    current = db.query(models.ResearchDocumentVersion).filter_by(document_id=doc.id, version=doc.current_version).first()
+    content = current.content if current else {}
+    if answer.id in (content.get("chat_appends") or []):
+        return {**_document_payload(db, doc), "already_added": True}  # a retry after success: nothing appended twice
+    if body.base_version != doc.current_version:
+        raise HTTPException(status_code=409, detail="This paper was changed since you opened it. Reload it, then add the answer again.")
+
+    new_content, change = research_paper.append_chat_section(
+        content, previous.content, answer.content, answer.sources or [],
+        answered_at=answer.created_at.isoformat() if answer.created_at else "", message_id=answer.id,
+        evidence=session.evidence_log or [])
+    version = doc.current_version + 1
+    db.add(models.ResearchDocumentVersion(document_id=doc.id, version=version, source="chat", content=new_content))
+    doc.current_version, doc.edited = version, True  # the latest version has no PDF yet: made on the next download
+    try:
+        db.commit()
+    except IntegrityError:  # another request created this version at the same moment
+        db.rollback()
+        raise HTTPException(status_code=409, detail="This paper was changed at the same time. Reload it, then try again.")
+    log.info("chat answer added to paper doc=%s version=%d refs_added=%d", doc.id, version, len(change["references_added"]))
+    return {**_document_payload(db, doc), "already_added": False, "appended": change}
 
 
 def _pdf_object_path(doc: models.ResearchDocument, version: int) -> str:

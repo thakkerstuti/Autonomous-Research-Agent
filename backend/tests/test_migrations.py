@@ -25,13 +25,13 @@ from app.db_url import engine_options, normalise_database_url
 from app.models import Base
 
 BACKEND = Path(__file__).resolve().parent.parent
-HEAD = "9c3e5a1d7b20"      # latest revision
+HEAD = "b6d2f8a4c1e9"      # latest revision
 BASELINE = "e7de0666b0a1"  # the revision that creates the original tables
 BASELINE_TABLES = {
     "users", "oauth_accounts", "refresh_tokens", "auth_tokens",
     "papers", "paper_pages", "page_summaries", "study_artifacts", "research_sessions",
 }
-APP_TABLES = BASELINE_TABLES | {"research_documents", "research_document_versions"}
+APP_TABLES = BASELINE_TABLES | {"research_documents", "research_document_versions", "chat_messages"}
 
 
 def alembic_config(url: str | None = None, connection=None) -> Config:
@@ -123,6 +123,32 @@ def test_baseline_defines_every_model_table():
     assert set(Base.metadata.tables) == APP_TABLES
 
 
+def test_chat_messages_migration_keeps_existing_data(tmp_path):
+    """A database at the previous revision with a session and a paper: everything stays, the chat table is added."""
+    url = sqlite_url(tmp_path / "before-chat.db")
+    command.upgrade(alembic_config(url), "9c3e5a1d7b20")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text("insert into users (id, email, email_verified) values ('u1', 'ada@example.com', 1)"))
+        conn.execute(text("insert into research_sessions (id, user_id, question, output_format, status, report) "
+                          "values ('s1', 'u1', 'A question', 'full', 'ready', 'A report')"))
+        conn.execute(text("insert into research_documents (id, session_id, user_id, status, current_version, edited) "
+                          "values ('d1', 's1', 'u1', 'ready', 1, 0)"))
+
+    command.upgrade(alembic_config(url), "head")
+
+    with engine.connect() as conn:
+        assert conn.execute(text("select report from research_sessions")).scalar() == "A report"
+        assert conn.execute(text("select current_version from research_documents")).scalar() == 1
+        assert "chat_messages" in set(inspect(conn).get_table_names())
+        assert conn.execute(text("select count(*) from chat_messages")).scalar() == 0
+        assert schema_differences(conn) == []
+    command.downgrade(alembic_config(url), "9c3e5a1d7b20")  # never drops the conversations
+    with engine.connect() as conn:
+        assert "chat_messages" in set(inspect(conn).get_table_names())
+    engine.dispose()
+
+
 def test_research_documents_migration_keeps_existing_sessions(tmp_path):
     """A database at the previous revision with real research sessions: rows stay, new columns are NULL."""
     url = sqlite_url(tmp_path / "before-documents.db")
@@ -168,6 +194,9 @@ def test_postgresql_sql_creates_every_table_and_enables_row_level_security(tmp_p
     assert "ALTER TABLE research_sessions ADD COLUMN progress JSON" in sql
     assert "FOREIGN KEY(session_id) REFERENCES research_sessions (id) ON DELETE CASCADE" in sql
     assert "CREATE UNIQUE INDEX ix_research_documents_session_id ON research_documents (session_id)" in sql
+    assert re.search(r"CREATE TABLE chat_messages \(", sql)
+    assert "CREATE INDEX ix_chat_messages_session_created ON chat_messages (session_id, created_at)" in sql
+    assert sql.count("REFERENCES research_sessions (id) ON DELETE CASCADE") >= 2  # documents and chat messages
     assert "TopSecretPw42" not in sql and "someuser" not in sql and "db.invalid" not in sql  # no credentials in the output
     assert f"'{HEAD}'" in sql
 

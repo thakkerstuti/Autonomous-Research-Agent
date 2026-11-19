@@ -5,10 +5,14 @@ import { ArrowUp, Loader2 } from "lucide-react";
 import { OutputFormat } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const FORMATS: { value: OutputFormat; label: string; short: string; hint: string }[] = [
-  { value: "quick", label: "Quick answer", short: "Quick", hint: "A concise, direct answer with its key evidence and citations" },
-  { value: "detailed", label: "Detailed analysis", short: "Detailed", hint: "An in-depth answer: findings, comparisons, conflicting evidence and implications" },
-  { value: "full", label: "Research paper", short: "Paper", hint: "A thorough investigation written up as an editable, structured research paper (PDF export)" },
+/** What the composer sends: a chat message in the conversation, or a new research run of a given depth. */
+export type ComposerMode = OutputFormat | "chat";
+
+const FORMATS: { value: ComposerMode; label: string; short: string; hint: string }[] = [
+  { value: "chat", label: "Chat", short: "Chat", hint: "Continue the conversation: follow-ups, explanations or a new topic, with web search when needed" },
+  { value: "quick", label: "Quick answer", short: "Quick", hint: "A new research run: a concise, direct answer with its key evidence and citations" },
+  { value: "detailed", label: "Detailed analysis", short: "Detailed", hint: "A new research run: findings, comparisons, conflicting evidence and implications" },
+  { value: "full", label: "Research paper", short: "Paper", hint: "A new research run written up as an editable, structured research paper (PDF export)" },
 ];
 
 /** Segmented control whose indicator slides to the selection. */
@@ -16,11 +20,14 @@ export function DepthSelector({
   value,
   onChange,
   disabled,
+  allowChat = false,
 }: {
-  value: OutputFormat;
-  onChange: (f: OutputFormat) => void;
+  value: ComposerMode;
+  onChange: (f: ComposerMode) => void;
   disabled?: boolean;
+  allowChat?: boolean;
 }) {
+  const options = allowChat ? FORMATS : FORMATS.filter((f) => f.value !== "chat");
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
 
@@ -32,7 +39,7 @@ export function DepthSelector({
     measure();
     window.addEventListener("resize", measure); // labels shorten on narrow screens
     return () => window.removeEventListener("resize", measure);
-  }, [value]);
+  }, [value, allowChat]);
 
   return (
     <div role="radiogroup" aria-label="Output type" className="relative inline-flex items-center rounded-[10px] bg-ink/[0.05] p-[3px]">
@@ -43,7 +50,7 @@ export function DepthSelector({
           style={{ transform: `translateX(${pill.x}px)`, width: pill.w }}
         />
       )}
-      {FORMATS.map((f) => (
+      {options.map((f) => (
         <button
           key={f.value}
           ref={(el) => { refs.current[f.value] = el; }}
@@ -74,13 +81,15 @@ export function Composer({
   onSend,
   format,
   onFormatChange,
+  allowChat = false,
 }: {
   placeholder: string;
   disabled?: boolean;
   busy?: boolean;
   onSend: (text: string) => void;
-  format: OutputFormat;
-  onFormatChange: (f: OutputFormat) => void;
+  format: ComposerMode;
+  onFormatChange: (f: ComposerMode) => void;
+  allowChat?: boolean;
 }) {
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -92,8 +101,9 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value]);
 
-  const tooShort = value.trim().length > 0 && value.trim().length < 10;
-  const canSend = value.trim().length > 0 && !disabled;
+  // A new research run needs a real question; a chat message can be as short as "why?"
+  const tooShort = format !== "chat" && value.trim().length > 0 && value.trim().length < 10;
+  const canSend = value.trim().length > 0 && !tooShort && !disabled;
 
   function submit() {
     if (!canSend) return;
@@ -119,7 +129,7 @@ export function Composer({
         className="block max-h-[200px] min-h-[52px] w-full resize-none bg-transparent px-4 pb-1 pt-4 text-[15.5px] leading-[1.5] text-ink outline-none placeholder:text-ink-faint"
       />
       <div className="flex items-center justify-between gap-3 px-2.5 pb-2.5 pt-1">
-        <DepthSelector value={format} onChange={onFormatChange} disabled={busy} />
+        <DepthSelector value={format} onChange={onFormatChange} disabled={busy} allowChat={allowChat} />
         <div className="flex items-center gap-3">
           <span
             className={cn(
@@ -127,7 +137,7 @@ export function Composer({
               tooShort ? "text-warn opacity-100" : "text-ink-faint opacity-100"
             )}
           >
-            {tooShort ? "Questions need at least 10 characters" : "Enter to send · Shift + Enter for a new line"}
+            {tooShort ? "A new research run needs at least 10 characters" : "Enter to send · Shift + Enter for a new line"}
           </span>
           <button
             onClick={submit}

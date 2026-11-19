@@ -8,6 +8,7 @@ import { getAccessToken, recoverFromUnauthorized } from "./auth";
 import { OutputFormat } from "./types";
 import type { RunProgress, RunStatus } from "./run-stages";
 import { runRequestBody } from "./mode-intent";
+import { ChatMessageDto, ChatSource, parseSSE } from "./chat-stream";
 
 export { STAGE_ORDER, stageStates, runSeconds, parseServerTime } from "./run-stages";
 export type { RunProgress, RunStatus, StageKey, StageState } from "./run-stages";
@@ -88,6 +89,8 @@ export interface PaperReference {
   url: string;
   accessed: string;
   source_type?: string;
+  /** "chat": added to the paper from a chat answer (not part of the original research). */
+  added_from?: string;
 }
 
 export interface PaperContent {
@@ -108,8 +111,20 @@ export interface ResearchDocument extends DocumentSummary {
   version: number | null;
   content: PaperContent | null;
   pdf: { version: number | null; stored: boolean };
-  versions: { version: number; source: "generated" | "edit"; created_at: string | null }[];
+  versions: { version: number; source: "generated" | "edit" | "chat"; created_at: string | null }[];
 }
+
+export const VERSION_LABEL: Record<string, string> = { generated: "Generated", edit: "Your edit", chat: "Added from chat" };
+
+/**
+ * Adds a chat answer (and its question) to the paper as a new version. The server reads the answer,
+ * its question and its sources from the database; only the message id and the base version are sent.
+ */
+export const appendChatToPaper = (documentId: string, messageId: string, baseVersion: number) =>
+  apiClient<ResearchDocument & { already_added: boolean }>(`/research/documents/${documentId}/append-chat`, {
+    method: "POST",
+    body: JSON.stringify({ message_id: messageId, base_version: baseVersion }),
+  });
 
 export const MODE_LABEL: Record<OutputFormat, string> = {
   quick: "Quick answer",
@@ -151,6 +166,75 @@ export const saveDocument = (documentId: string, content: PaperContent, baseVers
     method: "PUT",
     body: JSON.stringify({ content, base_version: baseVersion }),
   });
+
+/* ───────── the conversation's chat ───────── */
+
+/** Every chat message of a conversation (all its research runs), oldest first. */
+export const getThreadMessages = (threadId: string) =>
+  apiClient<ChatMessageDto[]>(`/research/threads/${threadId}/messages`);
+
+export interface ChatHandlers {
+  onStatus?: (stage: "thinking" | "searching" | "writing", label: string) => void;
+  onSources?: (sources: ChatSource[], usedWebSearch: boolean) => void;
+  onDelta?: (text: string) => void;
+}
+
+export interface ChatResult {
+  user: ChatMessageDto;
+  answer: ChatMessageDto;
+}
+
+/**
+ * Sends a message in the conversation and follows the streamed answer (Server-Sent Events read with
+ * fetch, since EventSource can't send the Authorization header). Resolves with both saved messages;
+ * rejects with an ApiError carrying the server's message if the answer fails (nothing is saved then).
+ */
+export async function streamChat(sessionId: string, message: string, handlers: ChatHandlers = {}, signal?: AbortSignal): Promise<ChatResult> {
+  const url = `${API_BASE}/research/sessions/${sessionId}/chat`;
+  const post = (token: string | null) =>
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ message }),
+      signal,
+    }).catch((err) => {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      throw new ApiError(0, "Couldn't reach the CogNexa server. Check your connection and try again.");
+    });
+  let res = await post(await getAccessToken());
+  if (res.status === 401) {
+    const renewed = await recoverFromUnauthorized();
+    if (renewed) res = await post(renewed);
+  }
+  if (!res.ok || !res.body) {
+    let detail = `The message couldn't be sent (HTTP ${res.status}).`;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {}
+    throw new ApiError(res.status, detail);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    if (done) buffer += decoder.decode() + "\n\n";
+    const { events, rest } = parseSSE(buffer);
+    buffer = rest;
+    for (const { event, data } of events) {
+      if (event === "status") handlers.onStatus?.(data.stage, data.label);
+      else if (event === "sources") handlers.onSources?.(data.sources ?? [], !!data.used_web_search);
+      else if (event === "delta") handlers.onDelta?.(String(data.text ?? ""));
+      else if (event === "done") return { user: data.user_message, answer: data.assistant_message };
+      else if (event === "error") throw new ApiError(Number(data.status) || 500, String(data.message || "The answer couldn't be completed."));
+    }
+    if (done) break;
+  }
+  throw new ApiError(0, "The answer was interrupted. Please try again.");
+}
 
 /** The PDF of the latest saved version, fetched with the user's token and handed to the browser as a download. */
 export async function downloadPaperPdf(documentId: string, fallbackName = "research-paper.pdf"): Promise<void> {

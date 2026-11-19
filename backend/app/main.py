@@ -9,6 +9,7 @@ from app.schemas import ResearchRequest
 from app.papers import router as papers_router
 from app.study_api import router as study_router
 from app.research_api import router as research_router
+from app.chat_api import router as chat_router
 from app.auth.routes import router as auth_router
 from app.auth.deps import get_current_user
 from app.auth import config as auth_config
@@ -68,6 +69,7 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(papers_router)
 app.include_router(study_router)
 app.include_router(research_router)
+app.include_router(chat_router)
 app.include_router(auth_router)
 
 

@@ -60,6 +60,17 @@ export interface ChatMessage {
   mode?: OutputFormat;
   /** A mode button's run: the question it re-runs, shown instead of a typed message. */
   basedOnQuestion?: string;
+  /** A conversation turn answered by the chat (not a research run). */
+  chat?: {
+    sessionId: string;
+    sources: import("./chat-stream").ChatSource[];
+    usedWebSearch: boolean;
+    stageLabel?: string;
+    error?: string;
+    createdAt?: string | null;
+    /** The saved answer's id (what "Add to paper" refers to). */
+    messageId?: string;
+  };
 }
 
 export interface SessionSummary {
