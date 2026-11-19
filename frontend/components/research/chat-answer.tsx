@@ -101,7 +101,7 @@ function SourceChip({ source }: { source?: ChatSource; n: string }) {
       </a>
       <span
         role="tooltip"
-        className="pointer-events-none invisible absolute bottom-[calc(100%+6px)] left-1/2 z-40 w-[280px] -translate-x-1/2 translate-y-1 scale-[0.97] rounded-xl bg-surface p-3.5 font-sans text-[12.5px] leading-snug opacity-0 shadow-panel transition-[opacity,transform,visibility] duration-150 ease-out group-hover/cite:visible group-hover/cite:translate-y-0 group-hover/cite:scale-100 group-hover/cite:opacity-100 group-hover/cite:delay-200"
+        className="pointer-events-none invisible absolute bottom-[calc(100%+6px)] left-1/2 z-40 w-[280px] max-sm:hidden -translate-x-1/2 translate-y-1 scale-[0.97] rounded-xl bg-surface p-3.5 font-sans text-[12.5px] leading-snug opacity-0 shadow-panel transition-[opacity,transform,visibility] duration-150 ease-out group-hover/cite:visible group-hover/cite:translate-y-0 group-hover/cite:scale-100 group-hover/cite:opacity-100 group-hover/cite:delay-200"
       >
         <span className="flex items-center justify-between gap-3 text-[11px] text-ink-faint">
           <span className="truncate">{domainOf(source.url)}</span>

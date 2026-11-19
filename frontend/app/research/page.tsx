@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useRef, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowUpRight, Plus, Copy, Check, RotateCcw, AlertCircle, ChevronDown, Info, Layers, FileText } from "lucide-react";
+import { ArrowUpRight, Plus, Copy, Check, RotateCcw, AlertCircle, ChevronDown, Info, Layers, FileText, Zap } from "lucide-react";
 import { useUiStore } from "@/lib/store";
 import { ChatMessage, OutputFormat } from "@/lib/types";
 import { buildResearchView, ResearchView } from "@/lib/research-view";
@@ -18,7 +18,6 @@ import { MODE_LABEL, ResearchDocument, ResearchRun, getRun, getThread, getThread
 import { modeCommand } from "@/lib/mode-intent";
 import { ChatMessageDto, mergeTimeline } from "@/lib/chat-stream";
 import { AddToPaperButton, ChatError, ChatMarkdown, ChatSources } from "@/components/research/chat-answer";
-import type { ComposerMode } from "@/components/research/composer";
 
 const CHIPS = [
   "Does AI actually help developers work faster?",
@@ -173,6 +172,85 @@ function ModeActions({ run, busy, onAction }: { run: ResearchRun; busy: boolean;
         </button>
       ))}
     </div>
+  );
+}
+
+/** After a question is sent: how should it be answered? Nothing runs until one is chosen. */
+function ChoiceEntry({ entry, inConversation, suggested, onChoose, onCancel }: {
+  entry: EntryData;
+  inConversation: boolean;
+  suggested: OutputFormat;
+  onChoose: (f: OutputFormat) => void;
+  onCancel: () => void;
+}) {
+  const text = entry.q.text ?? "";
+  const shortForResearch = text.trim().length < 10; // a research run needs a real question; a quick follow-up doesn't
+  const options: { format: OutputFormat; title: string; hint: string; time: string; icon: typeof Zap }[] = [
+    {
+      format: "quick", icon: Zap, title: "Quick answer", time: inConversation ? "Seconds" : "About a minute",
+      hint: inConversation ? "A direct answer that continues this conversation, with sources" : "A concise answer with its key evidence and citations",
+    },
+    { format: "detailed", icon: Layers, title: "Detailed analysis", time: "1–2 minutes", hint: "An in-depth answer: findings, comparisons, conflicting evidence" },
+    { format: "full", icon: FileText, title: "Research paper", time: "A few minutes", hint: "A full investigation written up as an editable paper, with PDF" },
+  ];
+  // A short message can still be a quick follow-up in a conversation, but not a research run
+  const unavailable = (f: OutputFormat) => shortForResearch && (f !== "quick" || !inConversation);
+  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+  useEffect(() => {
+    const first = unavailable(suggested) ? "quick" : suggested;
+    refs.current[first]?.focus({ preventScroll: true }); // Enter accepts the type chosen last time
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggested]);
+
+  return (
+    <article className="flex scroll-mt-6 flex-col gap-6">
+      <div className="animate-msg-in ml-auto max-w-[min(85%,600px)] whitespace-pre-wrap rounded-[20px] bg-surface3 px-4 py-2.5 text-[15.5px] leading-relaxed text-ink">
+        {text}
+      </div>
+      <div
+        className="flex gap-3.5"
+        onKeyDown={(e) => {
+          const pick = options[Number(e.key) - 1]; // 1, 2, 3 choose; Esc cancels
+          if (pick && !unavailable(pick.format)) onChoose(pick.format);
+          if (e.key === "Escape") onCancel();
+        }}
+      >
+        <ThinkingMark className="mt-[3px]" />
+        <div className="animate-msg-in min-w-0 flex-1">
+          <p className="text-[15px] text-ink">How should I answer this?</p>
+          <div role="group" aria-label="Choose how to answer" className="mt-3 grid gap-2 sm:grid-cols-3">
+            {options.map(({ format, title, hint, time, icon: Icon }, i) => {
+              const disabled = unavailable(format);
+              return (
+                <button
+                  key={format}
+                  ref={(el) => { refs.current[format] = el; }}
+                  onClick={() => onChoose(format)}
+                  disabled={disabled}
+                  className={cn(
+                    "pressable group flex flex-col items-start gap-1.5 rounded-2xl border bg-surface p-3.5 text-left transition-[border-color,box-shadow] duration-150",
+                    "hover:border-line-hover hover:shadow-sm focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45",
+                    format === suggested ? "border-accent-line" : "border-line"
+                  )}
+                >
+                  <span className="flex w-full items-center justify-between">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent-soft text-accent"><Icon size={15} /></span>
+                    <span className="mono hidden text-[11px] text-ink-faint sm:inline">{i + 1}</span>
+                  </span>
+                  <span className="text-[14px] font-medium text-ink">{title}</span>
+                  <span className="text-[12.5px] leading-snug text-ink-soft">{hint}</span>
+                  <span className="mt-auto pt-1 text-[11.5px] text-ink-faint">{time}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 text-[12.5px] text-ink-faint">
+            {shortForResearch && <span>Research needs a question of at least 10 characters.</span>}
+            <button onClick={onCancel} className="rounded hover:text-ink">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -419,11 +497,18 @@ function ResearchPage() {
   const { chatHistories, appendMessage, updateMessage, resetHistory } = useUiStore();
   const messages = chatHistories["research"];
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const inFlight = messages.some((m) => m.role === "assistant" && (m.status === "pending" || m.status === "streaming"));
   const busy = sending || inFlight;
-  const [outputFormat, setOutputFormat] = useState<OutputFormat>("detailed"); // the depth for new research runs
-  const [composerMode, setComposerMode] = useState<ComposerMode>("chat");
+  const awaitingChoice = messages.some((m) => m.awaitingChoice); // a question waiting for "how should I answer?"
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>("detailed"); // the answer type chosen last
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  /** Busy right now, read from the store (not the last render): a choice and its run happen in one go. */
+  function busyNow() {
+    return sendingRef.current || useUiStore.getState().chatHistories.research.some(
+      (m) => m.role === "assistant" && (m.status === "pending" || m.status === "streaming"));
+  }
   const bodyRef = useRef<HTMLDivElement>(null);
 
   // The conversation's thread: every follow-up joins it
@@ -436,7 +521,6 @@ function ResearchPage() {
     const runs = messages.map((m) => m.run).filter((r): r is ResearchRun => !!r);
     return [...runs].reverse().find((r) => r.status !== "in_progress" && r.status !== "failed")?.session_id ?? null;
   }, [messages]);
-  const chatAvailable = !!anchorId;
   // Research runs with a ready paper: their chat answers can be added to it
   const papersBySession = useMemo(() => {
     const out = new Map<string, { id: string }>();
@@ -455,29 +539,14 @@ function ResearchPage() {
       run: { ...holder.run, document: { ...holder.run.document, current_version: doc.current_version, edited: doc.edited, updated_at: doc.updated_at } },
     });
   }
-  // Before the first research result the composer starts research; afterwards it chats by default
-  const mode: ComposerMode = chatAvailable ? composerMode : composerMode === "chat" ? outputFormat : composerMode;
-
   useEffect(() => {
     const saved = readWorkspace().research?.format;
     if (saved && FORMATS.includes(saved as OutputFormat)) setOutputFormat(saved as OutputFormat);
   }, []);
 
-  // When a conversation gets its first research result, the composer switches to chatting about it
-  const hadAnchor = useRef(false);
-  useEffect(() => {
-    if (chatAvailable && !hadAnchor.current) setComposerMode("chat");
-    hadAnchor.current = chatAvailable;
-  }, [chatAvailable]);
-
   function chooseFormat(f: OutputFormat) {
     setOutputFormat(f);
     updateWorkspace((w) => ({ ...w, research: { ...(w.research ?? {}), format: f } }));
-  }
-
-  function chooseMode(m: ComposerMode) {
-    setComposerMode(m);
-    if (m !== "chat") chooseFormat(m);
   }
 
   // Pair each question with its answer
@@ -567,7 +636,8 @@ function ResearchPage() {
    * output_format + based_on (the server takes the question from that session), never typed text.
    */
   async function start(format: OutputFormat, input: { text: string } | { basedOn: string; question: string }) {
-    if (busy) return;
+    if (busyNow()) return;
+    sendingRef.current = true;
     setSending(true);
     setLoadError(null);
     const tempId = crypto.randomUUID();
@@ -596,6 +666,7 @@ function ResearchPage() {
       if (err?.status === 503) msg = `The research service is unavailable right now: ${msg}`;
       updateMessage("research", `a-${tempId}`, { status: "done", answer: `**Error:** ${msg}` });
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   }
@@ -610,7 +681,7 @@ function ResearchPage() {
    * exchange is answered again in place (nothing was saved for it).
    */
   async function sendChat(text: string, sessionId: string, reuse?: { qId: string; aId: string }) {
-    if (busy) return;
+    if (busyNow()) return;
     setLoadError(null);
     const tempId = crypto.randomUUID();
     const qId = reuse?.qId ?? `cq-${tempId}`;
@@ -652,23 +723,48 @@ function ResearchPage() {
   }
 
   /**
-   * The composer. In Chat mode (once the conversation has a research result) a message continues the
-   * conversation: follow-ups, references to earlier answers and new topics alike. A typed instruction
-   * such as "give detailed analysis" is a structured mode request for the last question. In a research
-   * mode, the message starts a new research run in the same conversation.
+   * Answers a question in the chosen way. Quick answer: once the conversation has a research result,
+   * the conversational answer (it understands follow-ups, references and topic changes, and searches
+   * the web when needed); before that, a quick research run. Detailed analysis and Research paper:
+   * a research run in the same conversation (a follow-up is researched as the question it stands for).
    */
-  function send(text: string, format?: ComposerMode, basedOn?: string | null) {
-    if (!text.trim() || busy) return;
-    const chosen = format ?? mode;
-    if (basedOn) return runMode(basedOn, chosen === "chat" ? outputFormat : chosen); // "Try again" on a mode run
+  function answerAs(text: string, format: OutputFormat) {
+    chooseFormat(format);
+    if (format === "quick" && anchorId) return void sendChat(text.trim(), anchorId);
+    void start(format, { text });
+  }
+
+  /** The choice card: replaces the waiting question with the run or answer of the chosen type. */
+  function choose(entry: EntryData, format: OutputFormat) {
+    const text = entry.q.text ?? "";
+    const store = useUiStore.getState();
+    store.resetHistory("research", store.chatHistories.research.filter((m) => m.id !== entry.q.id && m.id !== entry.a?.id));
+    answerAs(text, format);
+  }
+
+  function cancelChoice(entry: EntryData) {
+    const store = useUiStore.getState();
+    store.resetHistory("research", store.chatHistories.research.filter((m) => m.id !== entry.q.id && m.id !== entry.a?.id));
+  }
+
+  /**
+   * The message box. A sent question first asks how to answer it (quick answer, detailed analysis or
+   * research paper), in the conversation. A typed instruction such as "give detailed analysis" is
+   * itself the choice, for the last question. "Try again" (format given) repeats the earlier choice.
+   */
+  function send(text: string, format?: OutputFormat, basedOn?: string | null) {
+    if (!text.trim() || busy || awaitingChoice) return;
+    if (basedOn) return runMode(basedOn, format ?? outputFormat); // "Try again" on a mode run
+    if (format) return answerAs(text, format); // "Try again" on a question that failed
     const command = modeCommand(text);
     const last = latestQuestionTurn();
     if (command && last) {
       chooseFormat(command);
       return runMode(last.based_on ?? last.session_id, command);
     }
-    if (chosen === "chat" && anchorId) return void sendChat(text.trim(), anchorId);
-    void start(chosen === "chat" ? outputFormat : chosen, { text });
+    const id = crypto.randomUUID();
+    appendMessage("research", { id: `pq-${id}`, role: "user", text: text.trim(), status: "done", awaitingChoice: true });
+    appendMessage("research", { id: `pa-${id}`, role: "assistant", status: "done", awaitingChoice: true });
   }
 
   // A question handed over from the dashboard is asked once, then removed from the URL.
@@ -721,7 +817,16 @@ function ResearchPage() {
         ) : (
           <div className="mx-auto flex max-w-[760px] flex-col gap-12 px-5 pb-16 pt-10 sm:px-8">
             {entries.map((e) =>
-              e.a?.chat || e.q.chat ? (
+              e.q.awaitingChoice ? (
+                <ChoiceEntry
+                  key={e.q.id}
+                  entry={e}
+                  inConversation={!!anchorId}
+                  suggested={outputFormat}
+                  onChoose={(f) => choose(e, f)}
+                  onCancel={() => cancelChoice(e)}
+                />
+              ) : e.a?.chat || e.q.chat ? (
                 <ChatEntry
                   key={e.q.id}
                   entry={e}
@@ -742,16 +847,13 @@ function ResearchPage() {
         <div className="mx-auto max-w-[760px]">
           <Composer
             placeholder={
-              !hasMessages ? "Ask an open research question"
-              : mode === "chat" ? "Ask a follow-up, or start a new topic"
-              : "Ask a new research question"
+              awaitingChoice ? "Choose how to answer above"
+              : !hasMessages ? "Ask an open research question"
+              : "Ask a follow-up, or something new"
             }
-            disabled={busy}
+            disabled={busy || awaitingChoice}
             busy={busy}
             onSend={(t) => send(t)}
-            format={mode}
-            onFormatChange={chooseMode}
-            allowChat={chatAvailable}
           />
         </div>
       </div>

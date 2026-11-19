@@ -60,6 +60,8 @@ export interface ChatMessage {
   mode?: OutputFormat;
   /** A mode button's run: the question it re-runs, shown instead of a typed message. */
   basedOnQuestion?: string;
+  /** A sent message waiting for the user to choose how it should be answered. */
+  awaitingChoice?: boolean;
   /** A conversation turn answered by the chat (not a research run). */
   chat?: {
     sessionId: string;

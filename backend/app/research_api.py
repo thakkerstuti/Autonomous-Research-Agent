@@ -112,13 +112,32 @@ def _error_text(exc: Exception) -> str:
 
 
 def _engine_question(db: Session, s: models.ResearchSession) -> str:
-    """A follow-up is researched in the context of the thread's first question."""
+    """What the research engine investigates. A question asked later in a conversation ("give me a
+    practical example", "what about its applications?") is first rewritten as a standalone question
+    from the conversation, with the chat's planner; if that isn't possible, it is researched in the
+    context of the conversation's first question, as before."""
     if not s.thread_id or s.thread_id == s.id:
         return s.question
     root = db.get(models.ResearchSession, s.thread_id)
     if not root or root.user_id != s.user_id or root.question.strip() == s.question.strip():
         return s.question
-    return f"{s.question} (follow-up to the research question: \"{root.question}\")"
+    fallback = f"{s.question} (follow-up to the research question: \"{root.question}\")"
+    try:
+        from app import session_chat
+        from app.chat_api import _conversation
+        user = db.get(models.User, s.user_id)
+        history, earlier = _conversation(db, s, user)
+        if not history:
+            return fallback
+        background = root if root.report else s
+        ctx = session_chat.build_context(background, None, history, s.question, earlier_topics=earlier)
+        plan = session_chat.plan_query(ctx)
+        standalone = (plan.standalone_query or "").strip()
+        if plan.new_topic or (standalone and standalone.lower() != s.question.strip().lower()):
+            return standalone
+    except Exception as exc:  # the research still runs, with the older wording
+        log.warning("follow-up rewrite skipped session=%s error=%s", s.id, type(exc).__name__)
+    return fallback
 
 
 def _audited(write, question: str, engine_question: str, result: dict) -> tuple[str, dict]:

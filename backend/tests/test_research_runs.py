@@ -351,6 +351,44 @@ def test_pdf_is_kept_in_private_storage_and_served_again(client, token, engine, 
 
 # ───────── threads and History ─────────
 
+def test_a_follow_up_research_run_investigates_the_standalone_question(client, token, engine, writer, monkeypatch):
+    """"Give me a practical example" sent as a Detailed analysis is researched as the question it stands for."""
+    from app import session_chat
+    seen = []
+
+    def plan(ctx, **kw):
+        seen.append(ctx)
+        return session_chat.QueryPlan(relation="follow_up", standalone_query="What are practical examples of spaced practice for adults?")
+
+    monkeypatch.setattr(session_chat, "plan_query", plan)
+    first = run(client, token, "quick")
+    follow = run(client, token, "detailed", question="Give me a practical example.", thread_id=first["thread_id"])
+    assert engine.plan_questions[-1] == "What are practical examples of spaced practice for adults?"
+    assert follow["research_question"] == "Give me a practical example."  # the user's own words are what is shown
+    assert f"User: {QUESTION}" in seen[0].history  # the planner saw the conversation
+
+
+def test_a_topic_change_research_run_is_not_tied_to_the_first_question(client, token, engine, writer, monkeypatch):
+    from app import session_chat
+    monkeypatch.setattr(session_chat, "plan_query",
+                        lambda ctx, **kw: session_chat.QueryPlan(relation="new_topic", standalone_query="Explain quantum computing."))
+    first = run(client, token, "quick")
+    run(client, token, "quick", question="Now explain quantum computing.", thread_id=first["thread_id"])
+    assert engine.plan_questions[-1] == "Explain quantum computing."  # no "(follow-up to ...)" about spaced practice
+
+
+def test_a_failing_rewrite_falls_back_to_the_first_question_as_context(client, token, engine, writer, monkeypatch):
+    from app import session_chat
+
+    def broken(ctx, **kw):
+        raise session_chat.ChatError("The AI service isn't responding right now.", 503)
+
+    monkeypatch.setattr(session_chat, "plan_query", broken)
+    first = run(client, token, "quick")
+    run(client, token, "quick", question="And what about older adults?", thread_id=first["thread_id"])
+    assert engine.plan_questions[-1] == f'And what about older adults? (follow-up to the research question: "{QUESTION}")'
+
+
 def test_follow_up_joins_the_thread_and_history_restores_it(client, token, engine, writer):
     first = run(client, token, "full")
     tid = first["thread_id"]
