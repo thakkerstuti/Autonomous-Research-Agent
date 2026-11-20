@@ -149,6 +149,13 @@ export function createAutosaver(options: AutosaverOptions) {
       });
       return (await Promise.all(jobs)).every(Boolean);
     },
+    /** Drop a waiting draft without saving it (the question was skipped). */
+    discard(id: string) {
+      const p = pending.get(id);
+      if (p) clearTimer(p.timer);
+      pending.delete(id);
+      failed.delete(id);
+    },
     /** "Not saved, retry". */
     retry(id: string): Promise<boolean> {
       const text = failed.get(id);

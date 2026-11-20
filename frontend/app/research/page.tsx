@@ -11,6 +11,7 @@ import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ReportBody, SourceRow } from "@/components/research/report-body";
 import { WorkingFlow, formatDuration } from "@/components/research/working-flow";
 import { PaperCard } from "@/components/research/paper-card";
+import { AskQuestionsWhenOff, ThinkWhileYouWait } from "@/components/research/think-while-you-wait";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/page-header";
 import { readWorkspace, updateWorkspace } from "@/lib/workspace";
@@ -249,10 +250,12 @@ function ChatEntry({ entry, onRetry, busy, paper, onAddedToPaper }: {
   );
 }
 
-function Entry({ entry, onRetry, onAction, busy }: {
+function Entry({ entry, onRetry, onAction, onAsk, busy }: {
   entry: EntryData;
   onRetry: (q: string, format?: OutputFormat, basedOn?: string | null) => void;
   onAction: (basedOn: string, mode: OutputFormat) => void;
+  /** A suggested next question from "Your thinking vs the evidence" goes into the follow-up box. */
+  onAsk: (question: string) => void;
   busy: boolean;
 }) {
   const { q, a } = entry;
@@ -288,7 +291,10 @@ function Entry({ entry, onRetry, onAction, busy }: {
         <ThinkingMark active={pending && !failed} className="mt-[3px]" />
         <div className="min-w-0 flex-1">
           {pending && !failed ? (
-            <WorkingFlow progress={run?.progress} status="in_progress" mode={mode} />
+            <>
+              <WorkingFlow progress={run?.progress} status="in_progress" mode={mode} />
+              {run && <AskQuestionsWhenOff className="mt-4" />}
+            </>
           ) : failed ? (
             <div className="animate-msg-in">
               <p className="text-[15.5px] text-ink">I couldn&apos;t finish this one.</p>
@@ -335,6 +341,16 @@ function Entry({ entry, onRetry, onAction, busy }: {
                 {run && <WorkingFlow progress={run.progress} status={run.status} mode={mode} collapsible />}
               </div>
             </div>
+          )}
+          {/* Think while you wait: one card per research run, kept mounted from "working" to "done" */}
+          {run && !failed && (
+            <ThinkWhileYouWait
+              target={{ kind: "research", id: run.session_id }}
+              running={pending}
+              evidence={view?.evidence}
+              onAsk={onAsk}
+              className={pending ? "mt-5" : "mt-6"}
+            />
           )}
         </div>
       </div>
@@ -443,6 +459,7 @@ function ResearchPage() {
   const awaitingChoice = messages.some((m) => m.awaitingChoice); // a question waiting for "how should I answer?"
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("detailed"); // the answer type chosen last
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [composerDraft, setComposerDraft] = useState<{ text: string; n: number } | null>(null); // a suggested next question
 
   /** Busy right now, read from the store (not the last render): a choice and its run happen in one go. */
   function busyNow() {
@@ -784,7 +801,8 @@ function ResearchPage() {
                   onAddedToPaper={paperUpdated}
                 />
               ) : (
-                <Entry key={e.q.id} entry={e} busy={busy} onRetry={send} onAction={runMode} />
+                <Entry key={e.q.id} entry={e} busy={busy} onRetry={send} onAction={runMode}
+                  onAsk={(text) => setComposerDraft({ text, n: Date.now() })} />
               )
             )}
           </div>
@@ -800,6 +818,7 @@ function ResearchPage() {
             disabled={busy || awaitingChoice}
             busy={busy}
             onSend={(t) => send(t)}
+            draft={composerDraft}
           />
         </div>
       </div>

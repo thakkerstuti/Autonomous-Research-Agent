@@ -118,6 +118,18 @@ test("autosave: a failed save is retried once, then kept as 'not saved' until re
   assert.deepEqual(saver.failedIds(), []);
 });
 
+test("autosave: a discarded draft (skipped question) is never sent", async () => {
+  const t = fakeTimers();
+  const sent = [];
+  const saver = createAutosaver({ save: async (id, text) => sent.push([id, text]), ...t });
+  saver.change("a", "half an answer");
+  saver.discard("a");
+  t.runAll();
+  await saver.flush();
+  await tick();
+  assert.deepEqual(sent, []);
+});
+
 test("autosave: a retry succeeding on the second attempt reports saved", async () => {
   let fail = 1;
   const states = [];

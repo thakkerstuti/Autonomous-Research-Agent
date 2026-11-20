@@ -28,6 +28,7 @@ import { FlashcardsView } from "@/components/paper/study/flashcards-view";
 import { useStudyActions } from "@/components/paper/study/study-shared";
 import { PageNotes } from "./page-notes";
 import { NotesLevel } from "./notes-level";
+import { ThinkWhileYouWait } from "@/components/research/think-while-you-wait";
 import { AssistantPanel, useAssistant, type AssistantHandle } from "./assistant";
 import { cn } from "@/lib/utils";
 
@@ -391,6 +392,19 @@ export function PaperWorkspace({ paperId, onStudyAnother }: { paperId: string; o
             </p>
           )}
           <div className="relative min-h-0 flex-1">{center}</div>
+          {/* Think while you wait, while the overview or a section is being written */}
+          {paper?.status !== "needs_ocr" && !immersive && (
+            <div className="pointer-events-none absolute bottom-3 right-3 z-30 w-[min(400px,calc(100%-1.5rem))] sm:bottom-4 sm:right-4">
+              <div className="pointer-events-auto flex justify-end [&>section]:w-full [&>section]:shadow-panel">
+                <ThinkWhileYouWait
+                  target={{ kind: "paper", id: paperId }}
+                  running={kit?.status === "processing"}
+                  onOpenPage={openPage}
+                  onAsk={(q) => submit(q)}
+                />
+              </div>
+            </div>
+          )}
           {notice && (
             <div role="status" className="absolute bottom-14 left-1/2 z-30 flex max-w-[90%] -translate-x-1/2 items-center gap-3 rounded-[4px] bg-primary px-3.5 py-2 text-[12.5px] text-on-primary shadow-[0_8px_24px_-8px_rgb(0_0_0/0.4)]">
               {notice}
