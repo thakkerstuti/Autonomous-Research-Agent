@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useRef, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowUpRight, Plus, Copy, Check, RotateCcw, AlertCircle, ChevronDown, Info, Layers, FileText, Zap } from "lucide-react";
+import { Plus, Copy, Check, RotateCcw, AlertCircle, ChevronDown, Info, Layers, FileText, Zap } from "lucide-react";
 import { useUiStore } from "@/lib/store";
 import { ChatMessage, OutputFormat } from "@/lib/types";
 import { buildResearchView, ResearchView } from "@/lib/research-view";
@@ -12,75 +12,15 @@ import { ReportBody, SourceRow } from "@/components/research/report-body";
 import { WorkingFlow, formatDuration } from "@/components/research/working-flow";
 import { PaperCard } from "@/components/research/paper-card";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/ui/page-header";
 import { readWorkspace, updateWorkspace } from "@/lib/workspace";
 import { queryClient } from "@/lib/query-client";
 import { MODE_LABEL, ResearchDocument, ResearchRun, getRun, getThread, getThreadMessages, startModeRun, startRun, streamChat } from "@/lib/research-runs";
-import { modeCommand } from "@/lib/mode-intent";
+import { modeCommand, requestSubject } from "@/lib/mode-intent";
 import { ChatMessageDto, mergeTimeline } from "@/lib/chat-stream";
 import { AddToPaperButton, ChatError, ChatMarkdown, ChatSources } from "@/components/research/chat-answer";
 
-const CHIPS = [
-  "Does AI actually help developers work faster?",
-  "Compare attention mechanisms vs CNNs",
-  "What does the evidence say about spaced repetition?",
-  "Is there a replication crisis in psychology?",
-];
-
-const HOW = [
-  ["Understands", "Works out what your question is really asking."],
-  ["Discovers", "Finds relevant sources over several searches."],
-  ["Verifies", "Checks quotes against the original pages and weighs each source."],
-  ["Delivers", "A quick answer, a detailed analysis or a full research paper."],
-];
-
 const FORMATS: OutputFormat[] = ["quick", "detailed", "full"];
-
-/* ───────────── Empty state ───────────── */
-
-function EmptyState({ onPick }: { onPick: (t: string) => void }) {
-  return (
-    <div className="mx-auto grid min-h-full max-w-[1080px] items-center gap-12 px-5 py-12 sm:px-10 lg:grid-cols-[1.1fr_1fr] lg:gap-16">
-      <div className="stagger">
-        <h1 className="font-display text-display-xl font-semibold text-ink" style={{ ["--i" as string]: 0 }}>
-          Ask a question worth researching.
-        </h1>
-        <p className="mt-5 max-w-[50ch] text-body-lg text-ink-soft" style={{ ["--i" as string]: 1 }}>
-          CogNexa investigates it the way a careful researcher would, then answers with sources you can check line by line.
-        </p>
-        <ol className="mt-9 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-line pt-6" style={{ ["--i" as string]: 2 }}>
-          {HOW.map(([t, d], i) => (
-            <li key={t}>
-              <div className="flex items-baseline gap-2">
-                <span className="mono text-[11px] text-ink-faint">{i + 1}</span>
-                <span className="text-[13.5px] font-medium text-ink">{t}</span>
-              </div>
-              <p className="mt-1 pl-[18px] text-meta text-ink-soft">{d}</p>
-            </li>
-          ))}
-        </ol>
-      </div>
-
-      <div className="animate-view-in rounded-[20px] bg-surface p-6 shadow-sm sm:p-7" style={{ animationDelay: "120ms" }}>
-        <div>
-          <div className="col-label mb-2 px-1">Try one of these</div>
-          <ul>
-            {CHIPS.map((chip) => (
-              <li key={chip} className="border-b border-line last:border-b-0">
-                <button
-                  onClick={() => onPick(chip)}
-                  className="group flex w-full items-center justify-between gap-4 rounded-lg px-1 py-3 text-left text-[14px] text-ink-soft transition-colors duration-150 hover:text-ink"
-                >
-                  {chip}
-                  <ArrowUpRight size={15} className="flex-shrink-0 text-ink-faint transition-[transform,color] duration-200 ease-out group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-accent" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /* ───────────── One question and its answer ───────────── */
 
@@ -560,9 +500,10 @@ function ResearchPage() {
   }, [messages]);
 
   // When a new question is asked, bring its entry to the top of the view
+  // (not for the first one: the page title above it stays in view)
   const prevCount = useRef(entries.length);
   useEffect(() => {
-    if (entries.length > prevCount.current) {
+    if (entries.length > prevCount.current && entries.length > 1) {
       const nodes = bodyRef.current?.querySelectorAll("article");
       nodes?.[nodes.length - 1]?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
@@ -586,44 +527,45 @@ function ResearchPage() {
     }
   }
 
-  // Open a conversation from History (?thread=) or an older link to one question (?session=)
+  /**
+   * The address decides what is shown:
+   * - /research?thread=… (Recent research, History): that conversation. (The address gets the thread
+   *   when a conversation starts, so a reload keeps it.)
+   * - /research ("Research", "New research"): a new, empty conversation.
+   * - /research?q=… (a question from the Overview): asked once, then the address becomes /research.
+   */
+  const previousAddress = useRef<string | null>(null);
   useEffect(() => {
-    if (!threadParam && !sessionParam) return;
-    let active = true;
-    (async () => {
-      try {
-        const id = threadParam ?? (await getRun(sessionParam!)).thread_id;
-        if (active) await openThread(id);
-      } catch {
-        if (active) setLoadError("That conversation couldn't be found.");
-      }
-    })();
-    return () => { active = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadParam, sessionParam]);
-
-  // Otherwise reopen the conversation that was open before (after a reload or signing in again)
-  const restored = useRef(false);
-  useEffect(() => {
-    if (restored.current || threadParam || sessionParam || initialQuery) return;
-    restored.current = true;
+    const address = threadParam ? `thread:${threadParam}` : sessionParam ? `session:${sessionParam}` : initialQuery ? "ask" : "new";
+    const before = previousAddress.current;
+    previousAddress.current = address;
     const current = useUiStore.getState().chatHistories.research;
-    if (current.length) {
-      // Navigated away and back: keep following anything still running
-      current.forEach((m) => m.run?.status === "in_progress" && follow(m.run.session_id));
-      return;
-    }
-    const ws = readWorkspace().research;
-    (async () => {
-      let id = ws?.threadId ?? null;
-      const legacy = ws?.sessionIds?.[ws.sessionIds.length - 1];
-      if (!id && legacy) {
-        try { id = (await getRun(legacy)).thread_id; } catch {}
+
+    if (threadParam || sessionParam) {
+      const shown = current.find((m) => m.run?.thread_id)?.run?.thread_id;
+      if (threadParam && shown === threadParam) {
+        // Already on screen (this conversation just started, or we came back to it): keep following it
+        current.forEach((m) => m.run?.status === "in_progress" && follow(m.run.session_id));
+        return;
       }
-      if (id && !useUiStore.getState().chatHistories.research.length) await openThread(id);
-    })();
+      let active = true;
+      (async () => {
+        try {
+          const id = threadParam ?? (await getRun(sessionParam!)).thread_id;
+          if (active) await openThread(id);
+        } catch {
+          if (active) setLoadError("That conversation couldn't be found.");
+        }
+      })();
+      return () => { active = false; };
+    }
+    if (initialQuery || before === "ask") return; // the Overview's question is being asked: keep it
+    // "Research" / "New research": start fresh (earlier conversations stay in Recent research and History)
+    resetHistory("research", []);
+    setLoadError(null);
+    updateWorkspace((w) => ({ ...w, research: { format: w.research?.format, threadId: null } }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [threadParam, sessionParam, initialQuery]);
 
   /** The latest finished question of this conversation (what a typed "give detailed analysis" refers to). */
   function latestQuestionTurn(): ResearchRun | null {
@@ -659,6 +601,10 @@ function ResearchPage() {
         )
       );
       updateWorkspace((w) => ({ ...w, research: { ...(w.research ?? {}), threadId: run.thread_id, sessionIds: [], pending: null } }));
+      // The conversation now has an address: a reload reopens it, and "Research" / "New research" leave it
+      if (new URLSearchParams(window.location.search).get("thread") !== run.thread_id) {
+        window.history.replaceState(null, "", `/research?thread=${run.thread_id}`);
+      }
       follow(run.session_id);
       queryClient.invalidateQueries({ queryKey: ["threads"] });
     } catch (err: any) {
@@ -748,9 +694,13 @@ function ResearchPage() {
   }
 
   /**
-   * The message box. A sent question first asks how to answer it (quick answer, detailed analysis or
-   * research paper), in the conversation. A typed instruction such as "give detailed analysis" is
-   * itself the choice, for the last question. "Try again" (format given) repeats the earlier choice.
+   * The message box.
+   * - The first question of a new conversation asks how to answer it (quick answer, detailed analysis
+   *   or research paper), in the conversation.
+   * - After that, every message simply continues the conversation (also when it was reopened from
+   *   History). Asking for more depth is done in words: "give detailed analysis" or "generate a research
+   *   paper" applies to the last question; "a research paper on quantum computing" researches what it names.
+   * - "Try again" (format given) repeats the earlier choice.
    */
   function send(text: string, format?: OutputFormat, basedOn?: string | null) {
     if (!text.trim() || busy || awaitingChoice) return;
@@ -760,8 +710,10 @@ function ResearchPage() {
     const last = latestQuestionTurn();
     if (command && last) {
       chooseFormat(command);
+      if (requestSubject(text)) return void start(command, { text: text.trim() }); // e.g. "a research paper on X"
       return runMode(last.based_on ?? last.session_id, command);
     }
+    if (anchorId) return void sendChat(text.trim(), anchorId); // an ongoing conversation: no choice to make
     const id = crypto.randomUUID();
     appendMessage("research", { id: `pq-${id}`, role: "user", text: text.trim(), status: "done", awaitingChoice: true });
     appendMessage("research", { id: `pa-${id}`, role: "assistant", status: "done", awaitingChoice: true });
@@ -778,34 +730,9 @@ function ResearchPage() {
   }, [initialQuery]);
 
   const hasMessages = messages.length > 0;
-  const threadTitle = entries[0]?.q.text;
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-14 flex-shrink-0 items-center gap-3 border-b border-line px-4 sm:px-6">
-        <span className="text-[13.5px] font-semibold text-ink">Research</span>
-        {threadTitle && (
-          <>
-            <span className="text-ink-faint">/</span>
-            <span className="min-w-0 truncate text-[13.5px] text-ink-soft">{threadTitle}</span>
-          </>
-        )}
-        <div className="flex-1" />
-        {hasMessages && (
-          <button
-            onClick={() => {
-              resetHistory("research", []);
-              updateWorkspace((w) => ({ ...w, research: { format: w.research?.format, threadId: null } }));
-              if (threadParam || sessionParam) window.history.replaceState(null, "", "/research");
-            }}
-            disabled={busy}
-            className="pressable flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-ink-soft hover:bg-surface2 hover:text-ink disabled:opacity-40"
-          >
-            <Plus size={14} /> <span className="hidden sm:inline">New chat</span>
-          </button>
-        )}
-      </header>
-
       <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto">
         {loadError && (
           <p className="mx-auto mt-6 flex max-w-[760px] items-center gap-2 px-5 text-[13.5px] text-ink-soft sm:px-8">
@@ -813,9 +740,33 @@ function ResearchPage() {
           </p>
         )}
         {!hasMessages ? (
-          <EmptyState onPick={(t) => send(t)} />
+          // A new conversation: the page title, as on Library and History, and the message box
+          <div className="mx-auto max-w-[760px] px-5 pb-20 pt-10 sm:px-8 sm:pt-14">
+            <PageHeader
+              className="animate-view-in"
+              title="Research"
+              description="Ask a question. CogNexa investigates it and answers with sources you can check."
+            />
+            <div className="animate-view-in mt-9" style={{ animationDelay: "70ms" }}>
+              <Composer placeholder="Ask a question" disabled={busy} busy={busy} onSend={(t) => send(t)} />
+            </div>
+          </div>
         ) : (
-          <div className="mx-auto flex max-w-[760px] flex-col gap-12 px-5 pb-16 pt-10 sm:px-8">
+          <div className="mx-auto flex max-w-[760px] flex-col gap-12 px-5 pb-16 pt-8 sm:px-8 sm:pt-10">
+            <div className="-mb-4 flex items-center justify-between gap-3">
+              <h1 className="font-display text-[24px] font-semibold leading-tight text-ink">Research</h1>
+              <button
+                onClick={() => {
+                  resetHistory("research", []);
+                  updateWorkspace((w) => ({ ...w, research: { format: w.research?.format, threadId: null } }));
+                  if (threadParam || sessionParam) window.history.replaceState(null, "", "/research");
+                }}
+                disabled={busy}
+                className="pressable flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-ink-soft hover:bg-surface2 hover:text-ink disabled:opacity-40"
+              >
+                <Plus size={14} /> New chat
+              </button>
+            </div>
             {entries.map((e) =>
               e.q.awaitingChoice ? (
                 <ChoiceEntry
@@ -843,20 +794,18 @@ function ResearchPage() {
         )}
       </div>
 
-      <div className="px-4 pb-4 pt-2 sm:px-8 sm:pb-6">
-        <div className="mx-auto max-w-[760px]">
-          <Composer
-            placeholder={
-              awaitingChoice ? "Choose how to answer above"
-              : !hasMessages ? "Ask an open research question"
-              : "Ask a follow-up, or something new"
-            }
-            disabled={busy || awaitingChoice}
-            busy={busy}
-            onSend={(t) => send(t)}
-          />
+      {hasMessages && (
+        <div className="px-4 pb-4 pt-2 sm:px-8 sm:pb-6">
+          <div className="mx-auto max-w-[760px]">
+            <Composer
+              placeholder={awaitingChoice ? "Choose how to answer above" : "Ask a follow-up, or something new"}
+              disabled={busy || awaitingChoice}
+              busy={busy}
+              onSend={(t) => send(t)}
+            />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 // Run with: npm test   (node --test, no extra dependencies; Node strips the TS types)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { modeCommand, runRequestBody } from "../lib/mode-intent.ts";
+import { modeCommand, requestSubject, runRequestBody } from "../lib/mode-intent.ts";
 import { parseServerTime, runSeconds } from "../lib/run-stages.ts";
 
 test("a mode button sends output_format and based_on as structured data, never typed text", () => {
@@ -36,6 +36,23 @@ test("real research questions are never mistaken for mode instructions", () => {
   assert.equal(modeCommand("Generate hypotheses about sleep and memory"), null); // a request, but not for a mode
   assert.equal(modeCommand("Does writing a research paper by hand improve retention compared with typing it on a laptop?"), null);
   assert.equal(modeCommand(""), null);
+});
+
+test("a mode request with a subject is about that subject; a plain one is about the last question", () => {
+  assert.equal(modeCommand("write a research paper on quantum computing"), "full");
+  assert.equal(requestSubject("write a research paper on quantum computing"), "quantum computing");
+  assert.equal(requestSubject("Give me a detailed analysis of its applications."), "its applications");
+  assert.equal(requestSubject("generate a research paper"), "");
+  assert.equal(requestSubject("give detailed analysis"), "");
+  assert.equal(requestSubject("turn this into a research paper"), "");
+  assert.equal(requestSubject("give me a detailed analysis of this"), "");
+  assert.equal(requestSubject("a research paper on the same topic"), "");
+});
+
+test("a conversational message is never taken for a mode request", () => {
+  assert.equal(modeCommand("i think u told me answer was incorrect just check once"), null);
+  assert.equal(modeCommand("Can you check that again?"), null);
+  assert.equal(modeCommand("why is that important?"), null);
 });
 
 test("server times without a zone are UTC, not local time (the 336-minute bug)", () => {

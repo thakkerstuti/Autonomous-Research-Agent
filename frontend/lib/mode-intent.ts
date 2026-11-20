@@ -24,10 +24,30 @@ export function runRequestBody(
 
 export function modeCommand(text: string): ModeChoice | null {
   const t = (text || "").trim().toLowerCase().replace(/[.!?\s]+$/, "");
-  if (!t || t.split(/\s+/).length > 9) return null; // a real question, not an instruction
+  if (!t || t.split(/\s+/).length > 12) return null; // a real question, not an instruction
   if (!COMMAND_START.test(t) && !BARE.test(t)) return null;
   if (PAPER.test(t)) return "full";
   if (DETAILED.test(t)) return "detailed";
   if (QUICK.test(t)) return "quick";
   return null;
+}
+
+// Words that only phrase the request itself ("please give me a detailed analysis of this")
+const REQUEST_WORDS = new Set(`please can could would you now give write generate make create produce provide prepare draft
+turn convert expand go show do need want i me us my a an the this that these those it its into as in more full detailed detail
+details in-depth depth deeper elaborate thorough comprehensive analysis analyse analyze research paper report pdf quick short
+shorter brief briefly summary summarise summarize answer version one same above previous last on about of for regarding
+question topic again`.split(/\s+/));
+
+/**
+ * The subject a mode request names, if any: "research paper on quantum computing" -> "quantum computing",
+ * "give me a detailed analysis of its applications" -> "its applications". A plain request
+ * ("give detailed analysis", "turn this into a research paper") names none: it is about the last question.
+ */
+export function requestSubject(text: string): string {
+  const t = (text || "").trim().replace(/[.!?\s]+$/, "");
+  const m = /\b(?:on|about|of|regarding|for)\s+(.+)$/i.exec(t);
+  if (!m) return "";
+  const words = m[1].toLowerCase().split(/\s+/).filter(Boolean);
+  return words.some((w) => !REQUEST_WORDS.has(w.replace(/[^a-z0-9-]/g, ""))) ? m[1].trim() : "";
 }
