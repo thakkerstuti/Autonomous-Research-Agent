@@ -6,7 +6,6 @@
  * by the orb (onPhase, onWord, onHeard), and the question is available to screen readers.
  */
 import { useEffect, useRef, useState } from "react";
-import { Play } from "lucide-react";
 import { FATAL_ERRORS, listen, speak, type Listener } from "@/lib/voice";
 
 export type Phase = "speaking" | "listening" | "saving" | "blocked";
@@ -20,6 +19,7 @@ export function VoiceQuestion({
   onFallback,
   onPhase,
   onWord,
+  retry = 0,
 }: {
   question: { id: string; text: string };
   /** Pause the questions if nothing is said this long after listening starts. */
@@ -33,9 +33,10 @@ export function VoiceQuestion({
   onPhase?: (phase: Phase) => void;
   /** A word was spoken aloud. */
   onWord?: () => void;
+  /** Increase to try speaking again after the browser refused ("blocked"), from a click. */
+  retry?: number;
 }) {
   const [phase, setPhase] = useState<Phase>("speaking");
-  const [attempt, setAttempt] = useState(0); // "Tap to start" after the browser refused to speak
   const handlers = useRef({ onAnswer, onSilent, onHeard, onFallback, onWord });
   handlers.current = { onAnswer, onSilent, onHeard, onFallback, onWord };
   const phaseRef = useRef(onPhase);
@@ -99,22 +100,7 @@ export function VoiceQuestion({
       speech.cancel();
       listener?.abort();
     };
-  }, [question.id, question.text, silenceMs, attempt]);
+  }, [question.id, question.text, silenceMs, retry]);
 
-  return (
-    <>
-      <p className="sr-only" aria-live="polite">{question.text}</p>
-      {phase === "blocked" && (
-        <button
-          type="button"
-          onClick={() => setAttempt((n) => n + 1)}
-          aria-label="Start talking"
-          title="Start talking"
-          className="pressable absolute inset-0 z-10 m-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/90 text-on-primary shadow-panel"
-        >
-          <Play size={20} className="ml-0.5" />
-        </button>
-      )}
-    </>
-  );
+  return <p className="sr-only" aria-live="polite">{question.text}</p>;
 }

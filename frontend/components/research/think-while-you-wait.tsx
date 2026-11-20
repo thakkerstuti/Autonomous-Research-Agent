@@ -14,10 +14,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Lightbulb, Pause, PowerOff, RotateCcw, SkipForward, Sparkles, Volume2, X } from "lucide-react";
+import { ArrowRight, Lightbulb, RotateCcw, Sparkles, Volume2, X } from "lucide-react";
 import { CitationChip } from "@/components/research/report-body";
 import { VoiceQuestion } from "@/components/research/voice-question";
-import { VoiceOrb, type VoiceOrbHandle } from "@/components/research/voice-orb";
+import { VoiceBar } from "@/components/research/voice-bar";
+import { useVoiceBar, type BarControls, type BarMode } from "@/lib/voice-bar";
 import { speak, voiceSupported } from "@/lib/voice";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ApiError } from "@/lib/api-error";
@@ -115,6 +116,7 @@ export function ThinkWhileYouWait({
   onAsk,
   onOpenPage,
   className,
+  surface = "inline",
 }: {
   target: ReflectionTarget;
   /** The run (or the paper's output) is still being written. */
@@ -126,6 +128,9 @@ export function ThinkWhileYouWait({
   /** Paper: a [p.N] chip was clicked. */
   onOpenPage?: (page: number) => void;
   className?: string;
+  /** Where the voice shows: "composer" = the page's message bar becomes the voice (Research);
+   *  "inline" = a voice bar here (Paper Study, which has no message bar). */
+  surface?: "composer" | "inline";
 }) {
   const [enabled, setEnabled] = useAskQuestions();
   const queryClient = useQueryClient();
@@ -236,25 +241,28 @@ export function ThinkWhileYouWait({
   const [voiceNote, setVoiceNote] = useState<string | null>(null);
   useEffect(() => setVoice(voiceSupported()), []);
   const heardRef = useRef("");  // words heard for the current question (the user is mid-answer)
-  const orbRef = useRef<VoiceOrbHandle>(null);
   const voiceRef = useRef(false);
   voiceRef.current = voice;
+  // The voice bar: this run (or paper) owns it while CogNexa talks
+  const owner = `${targetKind}:${targetId}`;
+  const voiceMode = useRef<BarMode>("idle");
+  const flare = useCallback((strength: number) => useVoiceBar.getState().flare(owner, strength), [owner]);
+  const [blocked, setBlocked] = useState(false);  // the browser won't speak until the page is clicked
+  const [voiceRetry, setVoiceRetry] = useState(0);
 
-  /* ── the answer is ready: the encouraging message, said aloud by the orb ── */
-  const feedbackOrbRef = useRef<VoiceOrbHandle>(null);
+  /* ── the answer is ready: the encouraging message, said aloud through the voice bar ── */
   const [sayingFeedback, setSayingFeedback] = useState(false);
   const feedbackSpeech = useRef<{ cancel: () => void } | null>(null);
   const sayFeedback = useCallback((text: string) => {
     if (!text || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     feedbackSpeech.current?.cancel();
     setSayingFeedback(true);
-    const speech = speak(text, { onWord: () => feedbackOrbRef.current?.pulse(0.4) });
+    const speech = speak(text, { onWord: () => flare(0.45) });
     feedbackSpeech.current = speech;
     speech.done.catch(() => undefined).finally(() => {
       if (feedbackSpeech.current === speech) setSayingFeedback(false);
     });
-  }, []);
-  useEffect(() => { if (sayingFeedback) feedbackOrbRef.current?.setMode("speaking"); }, [sayingFeedback]);
+  }, [flare]);
   useEffect(() => () => feedbackSpeech.current?.cancel(), []);
 
   const pause = useCallback((reason: "busy" | "idle") =>
@@ -352,6 +360,40 @@ export function ThinkWhileYouWait({
   const evidenceMap = useMemo(() => new Map((evidence ?? []).map((e) => [e.id, e])), [evidence]);
   const [dismissed, setDismissed] = useState(false);
 
+  const waitingNow = !current || (!isOpen(current) && nextQuestionIndex(questions, index ?? -1) === null);
+  const resultShown = !running || !!r?.run_done || r?.status === "finished";
+  const voiceFinishing = !!(finishing && current && voice);
+  const voiceAsking = !voiceFinishing && !resultShown && voice && !!r && r.status !== "paused"
+    && !(r.status === "failed" && !questions.length);
+  const barOn = enabled && !dismissed && !!r && (voiceFinishing || voiceAsking || sayingFeedback);
+  const skipQuestion = () => {
+    if (!current) return;
+    const q = current;
+    void act("skip", async () => {
+      heardRef.current = "";
+      saver.discard(q.id);
+      const next = await saveAnswer(target, { question_id: q.id, skipped: true });
+      setIndex(nextQuestionIndex(next.questions, index ?? -1));
+      return next;
+    });
+  };
+  const controls: BarControls = sayingFeedback && !voiceFinishing && !voiceAsking
+    ? { stop: () => feedbackSpeech.current?.cancel() }
+    : blocked ? { start: () => { setBlocked(false); setVoiceRetry((n) => n + 1); } }
+    : voiceFinishing ? { feedback: finishVoice }
+    : {
+      ...(waitingNow ? {} : { skip: skipQuestion }),
+      pause: () => { heardRef.current = ""; void pause("busy"); },
+      off: () => { heardRef.current = ""; setEnabled(false); },
+    };
+  useEffect(() => {
+    const bar = useVoiceBar.getState();
+    if (!barOn) return bar.release(owner);
+    bar.claim(owner, controls);
+    bar.setMode(owner, sayingFeedback && !voiceFinishing && !voiceAsking ? "speaking" : voiceMode.current);
+  });
+  useEffect(() => () => useVoiceBar.getState().release(owner), [owner]);
+
   /* ───────── render ───────── */
 
   if (!enabled || !r || dismissed) return null;
@@ -386,74 +428,42 @@ export function ThinkWhileYouWait({
     />
   );
 
-  /** Small round icon button for the voice card (named for screen readers and on hover; no visible text). */
-  const iconButton = (label: string, icon: React.ReactNode, onClick: () => void, primary = false) => (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={busy !== null}
-      aria-label={label}
-      title={label}
-      className={cn(
-        "pressable flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:opacity-40",
-        primary ? "bg-primary text-on-primary" : "bg-ink/[0.06] text-ink-soft hover:bg-ink/[0.1] hover:text-ink",
+  // Voice: no card. The question is spoken and the answer heard through the voice bar (the message bar on
+  // Research, or a bar here in Paper Study). The same shape for asking and "Finish your thought?", so a
+  // spoken answer in progress survives the switch.
+  const voiceCard = (question: typeof current) => (
+    <>
+      {question && (
+        <VoiceQuestion
+          key={question.id}
+          question={question}
+          silenceMs={idleTimeoutMs(question.text)}
+          retry={voiceRetry}
+          onAnswer={(text) => answerByVoice(question.id, text)}
+          onSilent={() => void (finishingRef.current ? finishVoice() : pause("idle"))}
+          onHeard={(text) => { heardRef.current = text; setTypedAt(Date.now()); flare(0.45); }}
+          onWord={() => flare(0.35)}
+          onPhase={(phase) => {
+            setBlocked(phase === "blocked");
+            voiceMode.current = phase === "speaking" ? "speaking" : phase === "listening" ? "listening" : "idle";
+            useVoiceBar.getState().setMode(owner, voiceMode.current);
+          }}
+          onFallback={(code) => {
+            setVoice(false);
+            setVoiceNote(code === "not-allowed" || code === "service-not-allowed"
+              ? "The microphone is blocked, so you can type your answers instead."
+              : "Voice isn't available here right now, so you can type your answers instead.");
+          }}
+        />
       )}
-    >
-      {icon}
-    </button>
-  );
-
-  // Voice: the neuron is the voice. No words on screen; the orb speaks, listens and reacts.
-  const voiceCard = (finishingMode: boolean, question: typeof current) => (
-    <section
-      aria-label={finishingMode ? "Finish your thought" : "Think while you wait"}
-      className={cn("animate-msg-in relative", className)}
-    >
-      <div className="relative">
-        <VoiceOrb ref={orbRef} className="h-[280px] w-full sm:h-[320px]" />
-        {question && (
-          <VoiceQuestion
-            key={question.id}
-            question={question}
-            silenceMs={idleTimeoutMs(question.text)}
-            onAnswer={(text) => answerByVoice(question.id, text)}
-            onSilent={() => void (finishingRef.current ? finishVoice() : pause("idle"))}
-            onHeard={(text) => { heardRef.current = text; setTypedAt(Date.now()); orbRef.current?.pulse(0.45); }}
-            onWord={() => orbRef.current?.pulse(0.35)}
-            onPhase={(phase) => orbRef.current?.setMode(phase === "speaking" ? "speaking" : phase === "listening" ? "listening" : "idle")}
-            onFallback={(code) => {
-              setVoice(false);
-              setVoiceNote(code === "not-allowed" || code === "service-not-allowed"
-                ? "The microphone is blocked, so you can type your answers instead."
-                : "Voice isn't available here right now, so you can type your answers instead.");
-            }}
-          />
-        )}
-        <div className="absolute inset-x-0 bottom-1 flex items-center justify-center gap-2">
-          {finishingMode
-            ? iconButton("Get feedback", <Sparkles size={16} />, finishVoice, true)
-            : question && (
-              <>
-                {iconButton("Skip this question", <SkipForward size={15} />, () => void act("skip", async () => {
-                  heardRef.current = "";
-                  saver.discard(question.id);
-                  const next = await saveAnswer(target, { question_id: question.id, skipped: true });
-                  setIndex(nextQuestionIndex(next.questions, index ?? -1));
-                  return next;
-                }))}
-                {iconButton("I'm busy: pause the questions", <Pause size={15} />, () => { heardRef.current = ""; void pause("busy"); })}
-                {iconButton("Stop asking me questions while I wait", <PowerOff size={15} />, () => { heardRef.current = ""; setEnabled(false); })}
-              </>
-            )}
-        </div>
-      </div>
+      {surface === "inline" && <VoiceBar className={className} />}
       {saving === "error" && question && <div className="mt-2 flex">{saveNote}</div>}
       {error && <p role="alert" className="mt-2 text-[12.5px] text-bad">{error}</p>}
-    </section>
+    </>
   );
 
   // The result arrived mid-answer: let them finish, then compare
-  if (finishing && current && voice) return voiceCard(true, current);
+  if (voiceFinishing) return voiceCard(current);
   if (finishing && current) {
     return (
       <section aria-label="Finish your thought" className={cn("animate-msg-in rounded-2xl border border-line bg-surface p-4 sm:p-5", className)}>
@@ -491,7 +501,7 @@ export function ThinkWhileYouWait({
             </button>
           )}
         </div>
-        {sayingFeedback && <VoiceOrb ref={feedbackOrbRef} className="-mx-4 h-[200px] sm:-mx-5" />}
+        {sayingFeedback && surface === "inline" && <VoiceBar className="mt-3" />}
         {r.feedback && spokenFeedback(r.feedback) && (
           <div className="mt-3 flex items-start gap-2">
             <p className="flex-1 text-[15.5px] leading-relaxed text-ink">{spokenFeedback(r.feedback)}</p>
@@ -587,7 +597,7 @@ export function ThinkWhileYouWait({
   const waiting = !current || !isOpen(current) && nextQuestionIndex(questions, index ?? -1) === null;
   const moreComing = r.generating || (r.status === "active" && !r.exhausted && !r.limit_reached);
   // Voice: the orb stays while the next question is on its way (no thinking text)
-  if (voice && !(r.status === "failed" && !questions.length)) return voiceCard(false, waiting ? undefined : current);
+  if (voiceAsking) return voiceCard(waiting ? undefined : current);
 
   return (
     <section

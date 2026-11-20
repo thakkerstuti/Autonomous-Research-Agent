@@ -12,6 +12,8 @@ import { ReportBody, SourceRow } from "@/components/research/report-body";
 import { WorkingFlow, formatDuration } from "@/components/research/working-flow";
 import { PaperCard } from "@/components/research/paper-card";
 import { AskQuestionsWhenOff, ThinkWhileYouWait } from "@/components/research/think-while-you-wait";
+import { VoiceBar } from "@/components/research/voice-bar";
+import { useVoiceBar } from "@/lib/voice-bar";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/page-header";
 import { readWorkspace, updateWorkspace } from "@/lib/workspace";
@@ -349,6 +351,7 @@ function Entry({ entry, onRetry, onAction, onAsk, busy }: {
               running={pending}
               evidence={view?.evidence}
               onAsk={onAsk}
+              surface="composer"
               className={pending ? "mt-5" : "mt-6"}
             />
           )}
@@ -460,6 +463,7 @@ function ResearchPage() {
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("detailed"); // the answer type chosen last
   const [loadError, setLoadError] = useState<string | null>(null);
   const [composerDraft, setComposerDraft] = useState<{ text: string; n: number } | null>(null); // a suggested next question
+  const voiceTalking = useVoiceBar((s) => s.owner !== null); // CogNexa is talking: the message bar is its voice
 
   /** Busy right now, read from the store (not the last render): a choice and its run happen in one go. */
   function busyNow() {
@@ -811,7 +815,7 @@ function ResearchPage() {
 
       <div className="px-4 pb-4 pt-2 sm:px-8 sm:pb-6">
         <div className="mx-auto max-w-[760px]">
-          <Composer
+          {voiceTalking ? <VoiceBar /> : <Composer
             placeholder={
               !hasMessages ? "Ask a question" : awaitingChoice ? "Choose how to answer above" : "Ask a follow-up, or something new"
             }
@@ -819,7 +823,7 @@ function ResearchPage() {
             busy={busy}
             onSend={(t) => send(t)}
             draft={composerDraft}
-          />
+          />}
         </div>
       </div>
     </div>
