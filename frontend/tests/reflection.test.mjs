@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  IDLE_BASE_MS, IDLE_PER_WORD_MS, PREFETCH_WHEN_LEFT, createAutosaver, firstQuestionIndex, idleTimeoutMs,
+  FINISH_THOUGHT_MS, IDLE_BASE_MS, IDLE_PER_WORD_MS, PREFETCH_WHEN_LEFT, createAutosaver, isMidThought, firstQuestionIndex, idleTimeoutMs,
   isOpen, nextQuestionIndex, remainingAfter, shouldRequestNextBatch, wordCount,
 } from "../lib/reflection-logic.ts";
 
@@ -19,6 +19,13 @@ test("idle time: 10 s plus 0.3 s per word of the question", () => {
   assert.equal(idleTimeoutMs({ text: "  Why   the south pole?  " }), 10_000 + 4 * 300); // 4 words
   assert.equal(idleTimeoutMs(""), 10_000);
   assert.equal(wordCount(" a  b\nc "), 3);
+});
+
+test("result ready mid-answer: wait while the box has focus or a draft is unsaved", () => {
+  assert.equal(FINISH_THOUGHT_MS, 20_000);
+  assert.equal(isMidThought({ focused: true, hasPending: false }), true);
+  assert.equal(isMidThought({ focused: false, hasPending: true }), true);
+  assert.equal(isMidThought({ focused: false, hasPending: false }), false);
 });
 
 test("open questions: an empty answer counts as unanswered, a skip does not", () => {

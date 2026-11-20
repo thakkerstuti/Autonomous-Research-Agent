@@ -20,7 +20,8 @@ import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ApiError } from "@/lib/api-error";
 import type { ViewEvidence } from "@/lib/research-view";
 import {
-  ANSWER_MAX, createAutosaver, firstQuestionIndex, getReflection, idleTimeoutMs, isOpen, nextQuestionIndex,
+  ANSWER_MAX, FINISH_THOUGHT_MS, createAutosaver, firstQuestionIndex, getReflection, idleTimeoutMs, isMidThought, isOpen,
+  nextQuestionIndex,
   pauseReflection, requestFeedback, requestNextBatch, resumeReflection, saveAnswer, shouldRequestNextBatch,
   useAskQuestions, type Autosaver, type QuestionKind, type Reflection, type ReflectionTarget, type SaveState,
 } from "@/lib/reflection";
@@ -252,7 +253,7 @@ export function ThinkWhileYouWait({
     setFeedbackBusy(true);
     setFeedbackError(null);
     try {
-      await saver.flush();
+      await saver.flush(); // the last answer is always included
       setR(await requestFeedback(target));
     } catch (err) {
       setFeedbackError(err instanceof ApiError && err.status === 400 ? null : message(err));
@@ -260,11 +261,38 @@ export function ThinkWhileYouWait({
       setFeedbackBusy(false);
     }
   }, [saver, setR, target]);
+  // The result arrived while the user was mid-answer: "Finish your thought?" instead of feedback at once.
+  // Declared before the automatic feedback below, so it decides first.
+  const focusedRef = useRef(false);
+  const finishingRef = useRef(false);
+  const [finishing, setFinishing] = useState(false);
+  const [typedAt, setTypedAt] = useState(0);
+  const wasRunning = useRef(running);
   useEffect(() => {
-    if (!r || running || !r.run_done || r.feedback || r.answered < 1 || feedbackAsked.current) return;
+    if (wasRunning.current && !running && isMidThought({ focused: focusedRef.current, hasPending: saver.hasPending() })) {
+      finishingRef.current = true;
+      setFinishing(true);
+    }
+    wasRunning.current = running;
+  }, [running, saver]);
+  const finishThought = useCallback(() => {
+    if (!finishingRef.current) return;
+    finishingRef.current = false;
+    setFinishing(false);
     feedbackAsked.current = true;
     void getFeedback();
-  }, [r, running, getFeedback]);
+  }, [getFeedback]);
+  useEffect(() => { // feedback after FINISH_THOUGHT_MS without typing
+    if (!finishing) return;
+    const t = setTimeout(finishThought, FINISH_THOUGHT_MS);
+    return () => clearTimeout(t);
+  }, [finishing, typedAt, finishThought]);
+
+  useEffect(() => {
+    if (!r || running || !r.run_done || r.feedback || r.answered < 1 || feedbackAsked.current || finishingRef.current) return;
+    feedbackAsked.current = true;
+    void getFeedback();
+  }, [r, running, getFeedback, finishing]);
 
   const evidenceMap = useMemo(() => new Map((evidence ?? []).map((e) => [e.id, e])), [evidence]);
   const [dismissed, setDismissed] = useState(false);
@@ -272,6 +300,59 @@ export function ThinkWhileYouWait({
   /* ───────── render ───────── */
 
   if (!enabled || !r || dismissed) return null;
+
+  const saving = current ? saveState[current.id] : undefined;
+  const draftText = current ? current.answer ?? "" : "";
+  const saveNote = current && (
+    <span className="ml-auto text-[12px] text-ink-faint" aria-live="polite">
+      {saving === "saving" ? "Saving…" : saving === "saved" ? "Saved" : saving === "error" ? (
+        <button type="button" onClick={() => void saver.retry(current.id)} className="text-bad underline underline-offset-2">
+          Not saved · Retry
+        </button>
+      ) : null}
+    </span>
+  );
+  const answerBox = current && (
+    <textarea
+      value={draftText}
+      onChange={(e) => {
+        const text = e.target.value.slice(0, ANSWER_MAX);
+        setDrafts((d) => ({ ...d, [current.id]: text }));
+        saver.change(current.id, text);
+        setTypedAt(Date.now());
+      }}
+      onFocus={() => { focusedRef.current = true; }}
+      onBlur={() => { focusedRef.current = false; }}
+      rows={3}
+      maxLength={ANSWER_MAX}
+      placeholder="Your thoughts, in a few words…"
+      aria-label={`Your answer to: ${current.text}`}
+      className="mt-3 block w-full resize-y rounded-xl border border-line bg-bg px-3 py-2.5 text-[14.5px] leading-relaxed text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-accent/60"
+    />
+  );
+
+  // The result arrived mid-answer: let them finish, then compare
+  if (finishing && current) {
+    return (
+      <section aria-label="Finish your thought" className={cn("animate-msg-in rounded-2xl border border-line bg-surface p-4 sm:p-5", className)}>
+        <p className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+          <Sparkles size={15} className="text-accent" /> Research is ready. Finish your thought?
+        </p>
+        <p className="mt-3 text-[15px] leading-snug text-ink">{current.text}</p>
+        {answerBox}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={finishThought}
+            className="pressable inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-medium text-on-primary"
+          >
+            Get feedback <ArrowRight size={13} />
+          </button>
+          {saveNote}
+        </div>
+      </section>
+    );
+  }
 
   // The result is ready: the comparison (only if something was answered)
   if (!running || r.run_done || r.status === "finished") {
@@ -366,8 +447,6 @@ export function ThinkWhileYouWait({
   }
 
   // Asking
-  const saving = current ? saveState[current.id] : undefined;
-  const draftText = current ? current.answer ?? "" : "";
   const waiting = !current || !isOpen(current) && nextQuestionIndex(questions, index ?? -1) === null;
   const moreComing = r.generating || (r.status === "active" && !r.exhausted && !r.limit_reached);
 
@@ -396,19 +475,7 @@ export function ThinkWhileYouWait({
         <div key={current.id} className="mt-3 animate-view-in" onAnimationEnd={() => setAppeared(true)}>
           <p className="text-[11.5px] uppercase tracking-[0.06em] text-ink-faint">{KIND_LABEL[current.kind] ?? "A question"}</p>
           <p className="mt-1 text-[15.5px] leading-snug text-ink">{current.text}</p>
-          <textarea
-            value={draftText}
-            onChange={(e) => {
-              const text = e.target.value.slice(0, ANSWER_MAX);
-              setDrafts((d) => ({ ...d, [current.id]: text }));
-              saver.change(current.id, text);
-            }}
-            rows={3}
-            maxLength={ANSWER_MAX}
-            placeholder="Your thoughts, in a few words…"
-            aria-label={`Your answer to: ${current.text}`}
-            className="mt-3 block w-full resize-y rounded-xl border border-line bg-bg px-3 py-2.5 text-[14.5px] leading-relaxed text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-accent/60"
-          />
+          {answerBox}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -443,13 +510,7 @@ export function ThinkWhileYouWait({
             >
               I&rsquo;m busy
             </button>
-            <span className="ml-auto text-[12px] text-ink-faint" aria-live="polite">
-              {saving === "saving" ? "Saving…" : saving === "saved" ? "Saved" : saving === "error" ? (
-                <button type="button" onClick={() => void saver.retry(current.id)} className="text-bad underline underline-offset-2">
-                  Not saved · Retry
-                </button>
-              ) : null}
-            </span>
+            {saveNote}
           </div>
         </div>
       )}

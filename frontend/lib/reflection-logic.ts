@@ -7,6 +7,7 @@
 export const IDLE_BASE_MS = 10_000;        // idle pause: base wait once a question has fully appeared
 export const IDLE_PER_WORD_MS = 300;       // plus reading time per word of the question
 export const AUTOSAVE_DELAY_MS = 800;      // debounce per question
+export const FINISH_THOUGHT_MS = 20_000;  // result ready while typing: feedback after this long without typing
 export const PREFETCH_WHEN_LEFT = 2;       // ask for the next batch when this many open questions are left
 export const ANSWER_MAX = 1000;            // characters, as on the server
 
@@ -63,6 +64,11 @@ export function idleTimeoutMs(question: { text: string } | string): number {
 /** Still waiting for the user: not answered (an empty answer counts as unanswered) and not skipped. */
 export function isOpen(q: Pick<ReflectionQuestion, "answer" | "skipped">): boolean {
   return !q.skipped && !(q.answer ?? "").trim();
+}
+
+/** Mid-answer when the result arrives: the answer box has focus or a draft isn't saved yet. */
+export function isMidThought(s: { focused: boolean; hasPending: boolean }): boolean {
+  return s.focused || s.hasPending;
 }
 
 /** Open questions after the current one. */
