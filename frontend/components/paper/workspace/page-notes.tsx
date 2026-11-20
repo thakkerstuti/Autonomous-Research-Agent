@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowUp, RotateCcw } from "lucide-react";
+import { AlertCircle, ArrowUp, RotateCcw, Square } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import { useOutlineQuery, usePageExplanationQuery, usePaperQuery, usePaperStatusQuery, useStudyOutputQuery, useStudyStatusQuery } from "@/lib/queries";
 import { ThinkingMark } from "@/components/research/thinking-mark";
@@ -196,6 +196,24 @@ export function PageNotes({
         )}
       </div>
     );
+  } else if (!status && !working) {
+    // Notes were stopped (or the level changed) before this page was written
+    body = (
+      <div className="mt-5">
+        <p className="text-[14.5px] leading-[1.65] text-ink-soft">
+          Notes for this page haven&rsquo;t been written at the {level} level. Pick a level above, then continue.
+        </p>
+        <button
+          type="button"
+          onClick={() => run("request", onRequest)}
+          disabled={busy !== null}
+          className="mt-5 inline-flex h-9 items-center gap-2 rounded-[7px] bg-primary px-4 text-[13.5px] font-medium text-on-primary transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {busy === "request" ? <ThinkingMark active size={13} /> : null}
+          {busy === "request" ? "Starting…" : "Continue writing notes"}
+        </button>
+      </div>
+    );
   } else if (status === "failed") {
     body = (
       <div role="alert" className="mt-5 text-[14px] leading-relaxed">
@@ -230,7 +248,7 @@ export function PageNotes({
           <span className="t-meta">of {pageCount}</span>
         </div>
 
-        {requested.length > 0 && (
+        {textPages.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line pb-3">
             <div role="radiogroup" aria-label="Explanation level" className="flex items-center gap-3 text-[12.5px]">
               {LEVELS.map((l) => (
@@ -247,8 +265,23 @@ export function PageNotes({
                 </button>
               ))}
             </div>
-            <span className="t-meta" aria-live="polite">
-              {`${ready} of ${textPages.length} pages written${failed ? ` · ${failed} failed` : ""}`}
+            <span className="flex items-center gap-3">
+              {requested.length > 0 && (
+                <span className="t-meta" aria-live="polite">
+                  {`${ready} of ${textPages.length} pages written${failed ? ` · ${failed} failed` : ""}`}
+                </span>
+              )}
+              {working && (
+                <button
+                  type="button"
+                  onClick={() => run("stop", () => apiClient(`/papers/${paperId}/stop`, { method: "POST" }))}
+                  disabled={busy !== null}
+                  title="Stop writing notes. Pages already written are kept."
+                  className="inline-flex items-center gap-1 text-[12.5px] font-medium text-ink-soft underline decoration-line-hover underline-offset-4 transition-colors hover:text-ink disabled:opacity-50"
+                >
+                  {busy === "stop" ? <ThinkingMark active size={12} /> : <Square size={10} />} Stop
+                </button>
+              )}
             </span>
           </div>
         )}

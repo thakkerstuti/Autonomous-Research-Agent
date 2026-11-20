@@ -45,6 +45,56 @@ def _reject(user: models.User, reason: str, status: int = 400, **facts) -> HTTPE
     return HTTPException(status_code=status, detail=reason)
 
 
+def _same_paper(db: Session, user: models.User, size: int, page_count: int,
+                extracted: list[tuple[int, str, str]]) -> models.Paper | None:
+    """This user's paper with the same file size, page count and page text, if any."""
+    candidates = db.query(models.Paper).filter(
+        models.Paper.user_id == user.id, models.Paper.file_size == size, models.Paper.page_count == page_count
+    ).order_by(models.Paper.created_at.asc()).all()
+    texts = {number: text for number, text, _ in extracted}
+    for paper in candidates:
+        stored = {p.page_number: p.text or "" for p in db.query(models.PaperPage).filter(models.PaperPage.paper_id == paper.id)}
+        if stored == texts:
+            return paper
+    return None
+
+
+def _drop_waiting(db: Session, paper_id: str, keep_level: str | None = None) -> int:
+    """Take a paper's not-yet-started page notes off the queue (at every level but keep_level).
+    Only rows still waiting are removed; written notes and the page being written stay."""
+    q = db.query(models.PageSummary).filter(models.PageSummary.paper_id == paper_id, models.PageSummary.status == "pending")
+    if keep_level:
+        q = q.filter(models.PageSummary.level != keep_level)
+    return q.delete(synchronize_session=False)
+
+
+def _switch_level(db: Session, paper: models.Paper, level: str) -> str:
+    """Switch a paper's explanation level. Notes still waiting at the old level stop, so the
+    new level starts straight away. If notes had been asked for, the new level's are queued
+    (pages already written at that level are kept); otherwise only the choice is saved."""
+    requested = db.query(models.PageSummary.id).filter(models.PageSummary.paper_id == paper.id).first() is not None
+    previous = paper.level
+    paper.level = level
+    stopped = _drop_waiting(db, paper.id, keep_level=level)
+    queued = 0
+    if requested:
+        pages = db.query(models.PaperPage).filter(models.PaperPage.paper_id == paper.id, models.PaperPage.status == "ready").all()
+        existing = {
+            s.page_number
+            for s in db.query(models.PageSummary).filter(models.PageSummary.paper_id == paper.id, models.PageSummary.level == level)
+        }
+        for page in pages:
+            if page.page_number not in existing:
+                db.add(models.PageSummary(paper_id=paper.id, page_number=page.page_number, level=level, status="pending"))
+                queued += 1
+    db.commit()
+    status = tasks.refresh_paper_status(db, paper)
+    if status == "processing":
+        tasks.enqueue_paper(paper.id, level)
+    log.info("level change paper=%s from=%s to=%s queued_pages=%d stopped_pages=%d", paper.id, previous, level, queued, stopped)
+    return status
+
+
 @router.get("")
 def list_papers(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     papers = db.query(models.Paper).filter(models.Paper.user_id == user.id).order_by(models.Paper.created_at.desc()).all()
@@ -126,6 +176,23 @@ def upload_paper(
 
     text_pages = sum(1 for _, _, st in extracted if st == "ready")
     no_text = sum(1 for _, _, st in extracted if st == "no_text")
+
+    # The same PDF uploaded again opens the paper already there: nothing is stored or
+    # counted twice. Only the explanation level changes, when a different one was picked.
+    same = _same_paper(db, user, size, page_count, extracted)
+    if same:
+        if same.level != level:
+            _switch_level(db, same, level)
+        log.info("upload matched existing paper=%s user=%s level=%s", same.id, user.id[:8], level)
+        return {
+            "id": same.id,
+            "message": "You've already uploaded this paper, so it was opened instead.",
+            "status": same.status,
+            "page_count": same.page_count,
+            "text_pages": text_pages,
+            "needs_ocr": text_pages == 0,
+            "duplicate": True,
+        }
 
     # The original PDF goes to Supabase Storage BEFORE the paper is recorded, so a
     # failed upload never leaves a paper whose file is missing. Production never
@@ -258,25 +325,20 @@ def update_paper(paper_id: str, level: str = Form(...), db: Session = Depends(ge
     """Switch the explanation level. Pages already explained at that level are kept;
     the rest are queued."""
     paper = _owned_paper(db, paper_id, user)
-    paper.level = _check_level(level)
+    status = _switch_level(db, paper, _check_level(level))
+    return {"id": paper.id, "level": paper.level, "status": "processing" if status == "processing" else "ready"}
 
-    pages = db.query(models.PaperPage).filter(models.PaperPage.paper_id == paper_id, models.PaperPage.status == "ready").all()
-    existing = {
-        s.page_number
-        for s in db.query(models.PageSummary).filter(models.PageSummary.paper_id == paper_id, models.PageSummary.level == level)
-    }
-    new_summaries = 0
-    for page in pages:
-        if page.page_number not in existing:
-            db.add(models.PageSummary(paper_id=paper_id, page_number=page.page_number, level=level, status="pending"))
-            new_summaries += 1
+
+@router.post("/{paper_id}/stop")
+def stop_explaining(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Stop writing page notes. Notes already written are kept; the pages still waiting
+    are taken off the queue, and the reader can continue later at any level."""
+    paper = _owned_paper(db, paper_id, user)
+    stopped = _drop_waiting(db, paper.id)
     db.commit()
-
     status = tasks.refresh_paper_status(db, paper)
-    if status == "processing":
-        tasks.enqueue_paper(paper.id, level)
-    log.info("level change paper=%s level=%s queued_pages=%d", paper.id, level, new_summaries)
-    return {"id": paper.id, "level": level, "status": "processing" if status == "processing" else "ready"}
+    log.info("explanations stopped paper=%s pages=%d", paper.id, stopped)
+    return {"paper_id": paper.id, "level": paper.level, "stopped": stopped, "status": status}
 
 
 @router.get("/{paper_id}/pages")

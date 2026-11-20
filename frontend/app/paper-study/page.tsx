@@ -241,6 +241,8 @@ function PaperStudy() {
     try {
       const result = await uploadPaper(file, level, (phase, pct) => setUpload({ phase, pct }));
       queryClient.invalidateQueries({ queryKey: ["papers"] });
+      // The same PDF again opens the paper already there (the server doesn't store it twice)
+      queryClient.invalidateQueries({ queryKey: ["paper", result.id] });
       openPaper(result.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed. Please try again.");
@@ -285,7 +287,7 @@ function PaperStudy() {
 
                 {existing && !busy && (
                   <div className="mt-5 flex flex-wrap items-center justify-between gap-3 bg-accent-soft px-4 py-3 text-[13px] text-ink">
-                    <span>You&rsquo;ve already uploaded this paper. Open it instead of processing it again?</span>
+                    <span>You&rsquo;ve already uploaded this paper. It won&rsquo;t be added again: beginning opens the one you have.</span>
                     <button type="button" onClick={() => openPaper(existing.id)} className="font-medium text-ink underline decoration-accent-line underline-offset-4 hover:decoration-accent">
                       Open existing
                     </button>

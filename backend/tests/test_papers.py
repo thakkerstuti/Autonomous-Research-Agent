@@ -379,3 +379,85 @@ def test_page_text_endpoint_returns_extracted_text(client, user, gemini):
 def test_explain_refuses_scanned_pdf(client, user, gemini):
     pid = upload(client, user, mixed_pdf(0, 1), explain=False).json()["id"]
     assert client.post(f"/papers/{pid}/explain", headers=bearer(user)).status_code == 400
+
+
+# ───────── the same paper twice, stopping and switching levels ─────────
+
+def _paper_count(user_token, client):
+    return len(client.get("/papers", headers=bearer(user_token)).json())
+
+
+def test_same_pdf_uploaded_again_opens_the_existing_paper(client, user, gemini):
+    data = text_pdf(3)
+    first = upload(client, user, data, name="study.pdf").json()
+    again = client.post("/papers", headers=bearer(user), files={"file": ("study.pdf", data, "application/pdf")}, data={"level": "Medium"}).json()
+    assert again["id"] == first["id"] and again["duplicate"] is True
+    # renamed on disk, same document: still the same paper
+    renamed = client.post("/papers", headers=bearer(user), files={"file": ("copy of study.pdf", data, "application/pdf")}, data={"level": "Medium"}).json()
+    assert renamed["id"] == first["id"]
+    assert _paper_count(user, client) == 1
+    # a different PDF is a new paper
+    other = upload(client, user, text_pdf(3, words="A different paper about attention in transformers")).json()
+    assert other["id"] != first["id"] and _paper_count(user, client) == 2
+
+
+def test_same_pdf_with_another_level_switches_the_level_only(client, user, gemini):
+    data = text_pdf(2)
+    pid = upload(client, user, data, level="Beginner").json()["id"]
+    again = client.post("/papers", headers=bearer(user), files={"file": ("paper.pdf", data, "application/pdf")}, data={"level": "Pro"}).json()
+    assert again["id"] == pid and _paper_count(user, client) == 1
+    assert client.get(f"/papers/{pid}", headers=bearer(user)).json()["level"] == "Pro"
+
+
+def test_another_users_identical_pdf_is_their_own_paper(client, user, gemini):
+    data = text_pdf(2)
+    mine = upload(client, user, data).json()["id"]
+    other = register(client, email="other-reader@example.com").json()["access_token"]
+    theirs = upload(client, other, data).json()["id"]
+    assert theirs != mine
+
+
+def test_stop_takes_waiting_pages_off_the_queue_and_keeps_written_ones(client, user, gemini, monkeypatch):
+    monkeypatch.setattr(tasks, "enqueue_paper", lambda *a: None)  # notes requested, nothing written yet
+    pid = upload(client, user, text_pdf(4), level="Beginner").json()["id"]
+    db = SessionLocal()
+    db.query(models.PageSummary).filter_by(paper_id=pid, page_number=1).update({"status": "ready", "summary": "Written."})
+    db.commit()
+    db.close()
+    r = client.post(f"/papers/{pid}/stop", headers=bearer(user)).json()
+    assert r["stopped"] == 3
+    db = SessionLocal()
+    left = {s.page_number: s.status for s in db.query(models.PageSummary).filter_by(paper_id=pid)}
+    db.close()
+    assert left == {1: "ready"}
+    assert client.get(f"/papers/{pid}/status", headers=bearer(user)).json()["status"] != "processing"
+    # nothing new is counted anywhere: still one paper
+    assert _paper_count(user, client) == 1
+    # continuing later picks up only the pages that were stopped
+    monkeypatch.undo()
+    monkeypatch.setattr(tasks, "_call_gemini", gemini)
+    client.post(f"/papers/{pid}/explain", headers=bearer(user))
+    assert sorted(set(gemini.pages_sent())) == [2, 3, 4]
+
+
+def test_switching_level_mid_way_stops_the_old_level(client, user, gemini, monkeypatch):
+    queued = []
+    monkeypatch.setattr(tasks, "enqueue_paper", lambda pid, level: queued.append(level))
+    pid = upload(client, user, text_pdf(3), level="Beginner").json()["id"]
+    client.patch(f"/papers/{pid}", headers=bearer(user), data={"level": "Pro"})
+    db = SessionLocal()
+    rows = [(s.level, s.status) for s in db.query(models.PageSummary).filter_by(paper_id=pid)]
+    db.close()
+    assert ("Beginner", "pending") not in rows  # the old level's waiting pages stopped
+    assert sorted(rows) == [("Pro", "pending")] * 3
+    assert queued[-1] == "Pro" and _paper_count(user, client) == 1
+
+
+def test_choosing_a_level_before_asking_for_notes_starts_nothing(client, user, gemini):
+    pid = upload(client, user, text_pdf(2), explain=False).json()["id"]
+    client.patch(f"/papers/{pid}", headers=bearer(user), data={"level": "Beginner"})
+    assert client.get(f"/papers/{pid}", headers=bearer(user)).json()["level"] == "Beginner"
+    db = SessionLocal()
+    assert db.query(models.PageSummary).filter_by(paper_id=pid).count() == 0
+    db.close()
+    assert gemini.pages_sent() == []

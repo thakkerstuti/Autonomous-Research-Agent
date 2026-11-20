@@ -114,13 +114,17 @@ export default function DashboardPage() {
     return m;
   }, [detailQueries, sessionIds]);
 
-  const loading = sLoading || pLoading;
-  const empty = !loading && sessionList.length === 0 && paperList.length === 0;
+  const loading = sLoading || pLoading || rLoading;
 
   /* ── derived, all from real data ── */
-  const sReady = sessionList.filter((s) => s.status === "ready").length;
-  const sRunning = sessionList.filter((s) => s.status === "in_progress").length;
-  const sReview = sessionList.filter((s) => s.status === "review").length;
+  // One investigation is one conversation: a quick answer followed by a research paper
+  // in the same conversation is still one investigation, as in History and Recent research.
+  const threadList = threads ?? [];
+  const investigations = threadList.length;
+  const sReady = threadList.filter((t) => t.status === "ready" || t.status === "partial").length;
+  const sRunning = threadList.filter((t) => t.status === "in_progress").length;
+  const sReview = threadList.filter((t) => t.status === "review").length;
+  const empty = !loading && investigations === 0 && sessionList.length === 0 && paperList.length === 0;
   const pReady = paperList.filter((p) => p.status === "ready").length;
   const pProcessing = paperList.filter((p) => p.status === "processing").length;
   const pFailed = paperList.filter((p) => p.status === "failed").length;
@@ -137,7 +141,7 @@ export default function DashboardPage() {
   /* ── narrative headline ── */
   const headline = empty
     ? "Your desk is clear."
-    : `${word(sessionList.length)} ${plural(sessionList.length, "investigation")} and ${lower(word(paperList.length))} ${plural(paperList.length, "paper")} on your desk.`;
+    : `${word(investigations)} ${plural(investigations, "investigation")} and ${lower(word(paperList.length))} ${plural(paperList.length, "paper")} on your desk.`;
 
   const clauses: string[] = [];
   if (sRunning) clauses.push(`${word(sRunning)} ${plural(sRunning, "investigation is", "investigations are")} still running`);
@@ -216,7 +220,7 @@ export default function DashboardPage() {
       out.push({ title: `Study “${p.title}”`, why: "It is summarised and ready for the canvas.", href: `/paper-study?paperId=${encodeURIComponent(p.id)}` })
     );
     if (latestPaper) out.push({ title: latestPaper.paper_edited ? "Continue editing your research paper" : "Read your latest research paper", why: `“${latestPaper.title}”`, href: `/research/paper/${latestPaper.document_id}` });
-    if (!sessionList.length) out.push({ title: "Ask your first research question", why: "CogNexa finds and checks sources, then answers or writes a full paper.", href: "/research" });
+    if (!investigations) out.push({ title: "Ask your first research question", why: "CogNexa finds and checks sources, then answers or writes a full paper.", href: "/research" });
     if (!paperList.length) out.push({ title: "Bring a paper to study", why: "Upload a PDF and read it page by page.", href: "/paper-study" });
     return out.slice(0, 4);
   }, [sessionList, paperList, latestPaper]);
@@ -266,10 +270,10 @@ export default function DashboardPage() {
         >
           <LedgerCell
             label="Investigations"
-            value={String(sessionList.length)}
-            note={sessionList.length ? `${sReady} complete${sRunning ? ` · ${sRunning} running` : ""}${sReview ? ` · ${sReview} to review` : ""}` : "None started yet"}
-            loading={sLoading}
-            muted={!sessionList.length}
+            value={String(investigations)}
+            note={investigations ? `${sReady} complete${sRunning ? ` · ${sRunning} running` : ""}${sReview ? ` · ${sReview} to review` : ""}` : "None started yet"}
+            loading={rLoading}
+            muted={!investigations}
           />
           <LedgerCell
             label="Papers"
@@ -462,14 +466,14 @@ export default function DashboardPage() {
                       </p>
                     </div>
                   )}
-                  {sessionList.length > 0 && (
+                  {investigations > 0 && (
                     <div className="flex items-center gap-4">
-                      <ProgressRing value={sReady / sessionList.length} size={56} stroke={3.5} tone="ok">
-                        <span className="mono text-[11.5px] text-ink">{sReady}/{sessionList.length}</span>
+                      <ProgressRing value={sReady / investigations} size={56} stroke={3.5} tone="ok">
+                        <span className="mono text-[11.5px] text-ink">{sReady}/{investigations}</span>
                       </ProgressRing>
                       <p className="text-[13.5px] leading-snug text-ink-soft">
                         <span className="font-medium text-ink">Investigations completed.</span>{" "}
-                        {sReady === sessionList.length ? "Every investigation has finished." : `${sessionList.length - sReady} still open.`}
+                        {sReady === investigations ? "Every investigation has finished." : `${investigations - sReady} still open.`}
                       </p>
                     </div>
                   )}
