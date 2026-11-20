@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -13,14 +13,23 @@ export function Composer({
   disabled,
   busy,
   onSend,
+  draft,
 }: {
   placeholder: string;
   disabled?: boolean;
   busy?: boolean;
   onSend: (text: string) => void;
+  /** Text to put in the box for the user to edit or send (a new n each time), e.g. a suggested next question. */
+  draft?: { text: string; n: number } | null;
 }) {
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!draft) return;
+    setValue(draft.text);
+    ref.current?.focus();
+  }, [draft]);
 
   useLayoutEffect(() => {
     const el = ref.current;

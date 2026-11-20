@@ -56,9 +56,11 @@ def start_study_kit(paper_id: str, db: Session = Depends(get_db), user: models.U
 
 
 @router.post("/{paper_id}/study/{kind}/generate")
-def generate_study_output(paper_id: str, kind: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+def generate_study_output(paper_id: str, kind: str, ask_questions: bool = True, db: Session = Depends(get_db),
+                          user: models.User = Depends(get_current_user)):
     """Generate one section when the reader first opens it. Idempotent: a section
-    that is queued, running or finished is never generated again by this call."""
+    that is queued, running or finished is never generated again by this call.
+    A newly requested section starts "Think while you wait" questions unless ask_questions is false."""
     paper = _owned_paper(db, paper_id, user)
     if kind not in study.OUTPUTS:
         raise HTTPException(status_code=404, detail="Unknown study section")
@@ -67,6 +69,9 @@ def generate_study_output(paper_id: str, kind: str, db: Session = Depends(get_db
     status = study.kit_status(db, paper.id)
     if created or status["status"] == "processing":
         limiter.hit(f"study:user:{user.id}", 30, 3600)
+        if created and ask_questions:
+            from app.papers import _start_reflection
+            _start_reflection(db, paper)
         tasks.enqueue_study(paper.id)
         log.info("study section requested paper=%s kind=%s new=%s", paper.id, kind, bool(created))
     return study.kit_status(db, paper.id)

@@ -81,7 +81,6 @@ const toStance = (s: unknown): Stance => (s === "supports" || s === "refutes" ? 
 const toVerification = (v: unknown): Verification =>
   v === "verified" || v === "snippet_only" ? v : "unverified";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function buildResearchView(data: any): ResearchView | undefined {
   if (!data || typeof data !== "object") return undefined;
   const log: any[] = Array.isArray(data.evidence_log) ? data.evidence_log : [];

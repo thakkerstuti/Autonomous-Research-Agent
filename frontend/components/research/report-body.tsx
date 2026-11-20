@@ -39,7 +39,7 @@ function splitSections(md: string): Section[] {
 }
 
 /* Inline citation chip with a hover preview of the quoted evidence */
-function CitationChip({ ev, label }: { ev?: ViewEvidence; label: string }) {
+export function CitationChip({ ev, label }: { ev?: ViewEvidence; label: string }) {
   if (!ev) return <span className="mono text-[0.72em] text-ink-faint">[{label}]</span>;
   const tone = STANCE_TONE[ev.stance];
   return (
