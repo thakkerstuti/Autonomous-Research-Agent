@@ -14,8 +14,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Lightbulb, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowRight, Lightbulb, Pause, PowerOff, RotateCcw, SkipForward, Sparkles, X } from "lucide-react";
 import { CitationChip } from "@/components/research/report-body";
+import { VoiceQuestion } from "@/components/research/voice-question";
+import { VoiceOrb, type VoiceOrbHandle } from "@/components/research/voice-orb";
+import { voiceSupported } from "@/lib/voice";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ApiError } from "@/lib/api-error";
 import type { ViewEvidence } from "@/lib/research-view";
@@ -124,7 +127,7 @@ export function ThinkWhileYouWait({
   onOpenPage?: (page: number) => void;
   className?: string;
 }) {
-  const [enabled] = useAskQuestions();
+  const [enabled, setEnabled] = useAskQuestions();
   const queryClient = useQueryClient();
   // Stable while it's the same run or paper (the page passes a new object on every render)
   const { kind: targetKind, id: targetId } = targetProp;
@@ -228,6 +231,13 @@ export function ThinkWhileYouWait({
     }
   }, [setR]);
 
+  /* ── voice: questions are spoken and answered aloud; typing only when voice can't work here ── */
+  const [voice, setVoice] = useState(false);
+  const [voiceNote, setVoiceNote] = useState<string | null>(null);
+  useEffect(() => setVoice(voiceSupported()), []);
+  const heardRef = useRef("");  // words heard for the current question (the user is mid-answer)
+  const orbRef = useRef<VoiceOrbHandle>(null);
+
   const pause = useCallback((reason: "busy" | "idle") =>
     act("pause", async () => {
       await saver.flush();
@@ -239,10 +249,10 @@ export function ThinkWhileYouWait({
   // Depends only on the question itself, so the regular status checks never restart the timer
   const currentText = current?.text;
   useEffect(() => {
-    if (!currentText || !appeared || touched || !running || status !== "active") return;
+    if (voice || !currentText || !appeared || touched || !running || status !== "active") return;
     const t = setTimeout(() => void pauseRef.current("idle"), idleTimeoutMs(currentText));
     return () => clearTimeout(t);
-  }, [currentText, appeared, touched, running, status]);
+  }, [voice, currentText, appeared, touched, running, status]);
   const touch = () => { if (!touched) setTouched(true); };
 
   /* ── feedback, once the result is ready and something is answered ── */
@@ -269,7 +279,8 @@ export function ThinkWhileYouWait({
   const [typedAt, setTypedAt] = useState(0);
   const wasRunning = useRef(running);
   useEffect(() => {
-    if (wasRunning.current && !running && isMidThought({ focused: focusedRef.current, hasPending: saver.hasPending() })) {
+    if (wasRunning.current && !running
+      && isMidThought({ focused: focusedRef.current || !!heardRef.current, hasPending: saver.hasPending() })) {
       finishingRef.current = true;
       setFinishing(true);
     }
@@ -293,6 +304,26 @@ export function ThinkWhileYouWait({
     feedbackAsked.current = true;
     void getFeedback();
   }, [r, running, getFeedback, finishing]);
+
+  const answerByVoice = useCallback(async (questionId: string, text: string) => {
+    heardRef.current = "";
+    const answer = text.slice(0, ANSWER_MAX);
+    setDrafts((d) => ({ ...d, [questionId]: answer }));
+    saver.change(questionId, answer);
+    if (!(await saver.flush())) return; // kept as "Not saved · Retry"
+    if (finishingRef.current) return finishThought();
+    setIndex((i) => {
+      const qs = (queryClient.getQueryData(key) as Reflection | null)?.questions ?? questions;
+      return nextQuestionIndex(qs.map((q) => (q.id === questionId ? { ...q, answer } : q)), i ?? -1);
+    });
+  }, [saver, finishThought, queryClient, key, questions]);
+
+  /** "Get feedback" while the user is still talking: what was heard so far counts as their answer. */
+  const finishVoice = useCallback(() => {
+    if (current && heardRef.current) saver.change(current.id, heardRef.current.slice(0, ANSWER_MAX));
+    heardRef.current = "";
+    finishThought();
+  }, [current, saver, finishThought]);
 
   const evidenceMap = useMemo(() => new Map((evidence ?? []).map((e) => [e.id, e])), [evidence]);
   const [dismissed, setDismissed] = useState(false);
@@ -331,7 +362,74 @@ export function ThinkWhileYouWait({
     />
   );
 
+  /** Small round icon button for the voice card (named for screen readers and on hover; no visible text). */
+  const iconButton = (label: string, icon: React.ReactNode, onClick: () => void, primary = false) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy !== null}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "pressable flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:opacity-40",
+        primary ? "bg-primary text-on-primary" : "bg-white/[0.06] text-[#c9d4ff] hover:bg-white/[0.12] hover:text-white",
+      )}
+    >
+      {icon}
+    </button>
+  );
+
+  // Voice: the neuron is the voice. No words on screen; the orb speaks, listens and reacts.
+  const voiceCard = (finishingMode: boolean, question: typeof current) => (
+    <section
+      aria-label={finishingMode ? "Finish your thought" : "Think while you wait"}
+      className={cn("animate-msg-in relative", className)}
+    >
+      <div className="relative">
+        <VoiceOrb ref={orbRef} className="h-[220px] w-full shadow-panel sm:h-[260px]" />
+        {question && (
+          <VoiceQuestion
+            key={question.id}
+            question={question}
+            silenceMs={idleTimeoutMs(question.text)}
+            onAnswer={(text) => answerByVoice(question.id, text)}
+            onSilent={() => void (finishingRef.current ? finishVoice() : pause("idle"))}
+            onHeard={(text) => { heardRef.current = text; setTypedAt(Date.now()); orbRef.current?.pulse(0.45); }}
+            onWord={() => orbRef.current?.pulse(0.35)}
+            onPhase={(phase) => orbRef.current?.setMode(phase === "speaking" ? "speaking" : phase === "listening" ? "listening" : "idle")}
+            onFallback={(code) => {
+              setVoice(false);
+              setVoiceNote(code === "not-allowed" || code === "service-not-allowed"
+                ? "The microphone is blocked, so you can type your answers instead."
+                : "Voice isn't available here right now, so you can type your answers instead.");
+            }}
+          />
+        )}
+        <div className="absolute inset-x-0 bottom-3 flex items-center justify-center gap-2">
+          {finishingMode
+            ? iconButton("Get feedback", <Sparkles size={16} />, finishVoice, true)
+            : question && (
+              <>
+                {iconButton("Skip this question", <SkipForward size={15} />, () => void act("skip", async () => {
+                  heardRef.current = "";
+                  saver.discard(question.id);
+                  const next = await saveAnswer(target, { question_id: question.id, skipped: true });
+                  setIndex(nextQuestionIndex(next.questions, index ?? -1));
+                  return next;
+                }))}
+                {iconButton("I'm busy: pause the questions", <Pause size={15} />, () => { heardRef.current = ""; void pause("busy"); })}
+                {iconButton("Stop asking me questions while I wait", <PowerOff size={15} />, () => { heardRef.current = ""; setEnabled(false); })}
+              </>
+            )}
+        </div>
+      </div>
+      {saving === "error" && question && <div className="mt-2 flex">{saveNote}</div>}
+      {error && <p role="alert" className="mt-2 text-[12.5px] text-bad">{error}</p>}
+    </section>
+  );
+
   // The result arrived mid-answer: let them finish, then compare
+  if (finishing && current && voice) return voiceCard(true, current);
   if (finishing && current) {
     return (
       <section aria-label="Finish your thought" className={cn("animate-msg-in rounded-2xl border border-line bg-surface p-4 sm:p-5", className)}>
@@ -449,6 +547,8 @@ export function ThinkWhileYouWait({
   // Asking
   const waiting = !current || !isOpen(current) && nextQuestionIndex(questions, index ?? -1) === null;
   const moreComing = r.generating || (r.status === "active" && !r.exhausted && !r.limit_reached);
+  // Voice: the orb stays while the next question is on its way (no thinking text)
+  if (voice && !(r.status === "failed" && !questions.length)) return voiceCard(false, waiting ? undefined : current);
 
   return (
     <section
@@ -464,6 +564,7 @@ export function ThinkWhileYouWait({
         </p>
         <AskQuestionsSetting />
       </div>
+      {voiceNote && <p className="mt-2 text-[12.5px] text-ink-faint">{voiceNote}</p>}
 
       {r.status === "failed" && !questions.length ? (
         <p className="mt-3 text-[13.5px] text-ink-soft">No questions this time. Your answer is on its way.</p>

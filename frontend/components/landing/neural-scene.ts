@@ -258,9 +258,14 @@ export class NeuralScene {
   private centered = false;
   private tmp = new THREE.Vector3();
   private tmp2 = new THREE.Vector3();
+  // Voice (Think while you wait): the core pulses while CogNexa speaks and breathes while it listens
+  private voiceMode: "idle" | "speaking" | "listening" = "idle";
+  private zoom = 1; // the voice card shows the neuron close up
+  private voice = 0;
 
-  constructor(private canvas: HTMLCanvasElement, opts: { mobile: boolean; reduced: boolean; centered?: boolean }) {
+  constructor(private canvas: HTMLCanvasElement, opts: { mobile: boolean; reduced: boolean; centered?: boolean; zoom?: number }) {
     this.reduced = opts.reduced;
+    this.zoom = opts.zoom ?? 1;
     this.centered = !!opts.centered;
     this.S = opts.mobile ? 21 : 28;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
@@ -469,6 +474,16 @@ export class NeuralScene {
     }
   }
 
+  /** Voice: "speaking" pulses the core, "listening" lets it breathe, "idle" is the landing page's rest. */
+  setVoiceMode(mode: "idle" | "speaking" | "listening") {
+    this.voiceMode = mode;
+  }
+
+  /** A short flare (a spoken word, or words heard). */
+  pulse(strength = 0.6) {
+    if (!this.reduced) this.flash = Math.max(this.flash, clamp(strength));
+  }
+
   setPointer(x: number, y: number) {
     this.pointer.set(x, y);
   }
@@ -516,6 +531,8 @@ export class NeuralScene {
     // Damped toward the scroll target: smooth, and interruptible in either direction
     this.stage += (this.target - this.stage) * Math.min(1, dt * 3.2);
     this.pointerSmooth.lerp(this.pointer, Math.min(1, dt * 2.5));
+    const voiceTarget = this.voiceMode === "speaking" ? 1 : this.voiceMode === "listening" ? 0.35 : 0;
+    this.voice += (voiceTarget - this.voice) * Math.min(1, dt * 4);
   }
 
   private render() {
@@ -541,7 +558,7 @@ export class NeuralScene {
     // On narrow screens the copy sits low, so the neuron takes the open space above it
     const wy = this.centered ? 0 : this.narrow ? 1.75 : 0;
     this.world.position.set(wx, wy, 0);
-    this.world.scale.setScalar(this.centered ? (this.narrow ? 0.75 : 1.08) : this.narrow ? 0.6 : 1);
+    this.world.scale.setScalar((this.centered ? (this.narrow ? 0.75 : 1.08) : this.narrow ? 0.6 : 1) * this.zoom);
     this.world.rotation.y = this.pointerSmooth.x * 0.18;
     this.world.rotation.x = -this.pointerSmooth.y * 0.1;
     this.camera.position.z = lerp(9, 8.4, repT);
@@ -549,14 +566,18 @@ export class NeuralScene {
     /* Neuron */
     this.spin.rotation.y = t * 0.045;
     this.spin.rotation.x = Math.sin(t * 0.07) * 0.08;
-    const coreScale = (1 - 0.5 * repT) * (1 + Math.sin(t * 1.6) * 0.012 + this.flash * 0.12);
+    // Voice: a quick, uneven beat while speaking (like syllables), a slow swell while listening
+    const beat = this.voice * (this.voiceMode === "speaking"
+      ? 0.5 + 0.5 * Math.abs(Math.sin(t * 9.5) * Math.sin(t * 2.7 + 1))
+      : 0.5 + 0.5 * Math.sin(t * 2.2));
+    const coreScale = (1 - 0.5 * repT) * (1 + Math.sin(t * 1.6) * 0.012 + this.flash * 0.12 + beat * 0.07);
     this.core.scale.setScalar(coreScale);
-    this.coreMat.uniforms.uGlow.value = 1 + this.flash * 1.4 + 0.4 * hypT * (1 - repT);
+    this.coreMat.uniforms.uGlow.value = 1 + this.flash * 1.4 + 0.4 * hypT * (1 - repT) + beat * 1.1;
     this.rings.forEach((r, i) => {
       r.rotation.x += 0.004 * (i + 1);
       r.rotation.y += 0.003 * (2 - i);
     });
-    (this.halo.geometry.getAttribute("aSize") as THREE.BufferAttribute).setX(0, (6.2 + this.flash * 2.5) * (1 - 0.55 * repT));
+    (this.halo.geometry.getAttribute("aSize") as THREE.BufferAttribute).setX(0, (6.2 + this.flash * 2.5 + beat * 2.2) * (1 - 0.55 * repT));
     this.halo.geometry.getAttribute("aSize").needsUpdate = true;
     (this.dendrites.material as THREE.LineBasicMaterial).opacity = lerp(0.85, 0.32, sm(0.8, 1.8, st)) * (1 - 0.6 * repT);
 
