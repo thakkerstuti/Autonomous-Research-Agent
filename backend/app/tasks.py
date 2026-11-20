@@ -103,7 +103,7 @@ def refresh_paper_status(db: Session, paper: Paper) -> str:
     rows = db.query(PageSummary.status).filter(
         PageSummary.paper_id == paper.id, PageSummary.level == paper.level
     ).all()
-    statuses = [r[0] for r in rows]
+    statuses = [r[0] for r in rows if r[0] != "skipped"]  # skipped pages (front and back matter) don't count
     text_pages = db.query(PaperPage).filter(PaperPage.paper_id == paper.id, PaperPage.status == "ready").count()
 
     if text_pages == 0:

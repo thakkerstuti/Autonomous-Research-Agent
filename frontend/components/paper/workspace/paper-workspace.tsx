@@ -28,6 +28,7 @@ import { FlashcardsView } from "@/components/paper/study/flashcards-view";
 import { useStudyActions } from "@/components/paper/study/study-shared";
 import { PageNotes } from "./page-notes";
 import { NotesLevel } from "./notes-level";
+import { ExplanationView } from "./explanation-view";
 import { ThinkWhileYouWait } from "@/components/research/think-while-you-wait";
 import { AssistantPanel, useAssistant, type AssistantHandle } from "./assistant";
 import { cn } from "@/lib/utils";
@@ -37,12 +38,13 @@ const Reader = dynamic(() => import("./reader").then((m) => m.Reader), {
   loading: () => <div className="reader-desk h-full" />,
 });
 
-type View = "reader" | "overview" | "questions" | "insights" | "flashcards";
+type View = "explain" | "reader" | "overview" | "questions" | "insights" | "flashcards";
 type Companion = "notes" | "assistant";
-const VIEWS: View[] = ["reader", "overview", "questions", "insights", "flashcards"];
+const VIEWS: View[] = ["explain", "reader", "overview", "questions", "insights", "flashcards"];
 const KIND: Partial<Record<View, OutputKind>> = { overview: "summary", questions: "questions", insights: "highlights", flashcards: "flashcards" };
 const TABS: { view: View; label: string }[] = [
-  { view: "reader", label: "Read paper" },
+  { view: "explain", label: "Explanation" },
+  { view: "reader", label: "Original PDF" },
   { view: "overview", label: "Overview" },
   { view: "questions", label: "Questions" },
   { view: "insights", label: "Insights" },
@@ -101,7 +103,8 @@ export function PaperWorkspace({ paperId, onStudyAnother }: { paperId: string; o
     return w?.id === paperId ? w : null;
   }, [paperId]);
   const wide = typeof window !== "undefined" && window.innerWidth >= 1280;
-  const [view, setView] = useState<View>(() => (VIEWS.includes(saved?.view as View) ? (saved!.view as View) : "reader"));
+  const [view, setView] = useState<View>(() =>
+    VIEWS.includes(saved?.view as View) && saved!.view !== "reader" ? (saved!.view as View) : "explain");
   const [layout, setLayoutState] = useState<ReaderLayout | null>(null);
   const [paneOpen, setPaneOpen] = useState<boolean>(() => (typeof saved?.assistant === "boolean" ? saved.assistant : wide));
   const [pane, setPane] = useState<Companion>(() => (saved?.companion === "notes" ? "notes" : "assistant"));
@@ -313,6 +316,7 @@ export function PaperWorkspace({ paperId, onStudyAnother }: { paperId: string; o
     }
     return (
       <div className="h-full overflow-y-auto">
+        {view === "explain" && <ExplanationView paperId={paperId} onOpenPage={openPage} />}
         {view === "overview" && <OverviewView paperId={paperId} title={paper?.title ?? "Overview"} onOpenPage={openPage} />}
         {view === "questions" && <QuestionsView paperId={paperId} onOpenPage={openPage} />}
         {view === "insights" && <InsightsView paperId={paperId} onOpenPage={openPage} />}
@@ -370,7 +374,7 @@ export function PaperWorkspace({ paperId, onStudyAnother }: { paperId: string; o
                 <button
                   key={v}
                   type="button"
-                  onClick={() => (v === "reader" ? setView("reader") : openSection(v))}
+                  onClick={() => (v === "reader" || v === "explain" ? setView(v) : openSection(v))}
                   aria-current={active ? "page" : undefined}
                   className={cn(
                     "flex h-9 flex-shrink-0 items-center gap-2 whitespace-nowrap rounded-[3px] px-3 text-[13px] transition-colors lg:w-full",

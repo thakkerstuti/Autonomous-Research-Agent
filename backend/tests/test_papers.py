@@ -349,20 +349,12 @@ def test_same_job_queued_twice_runs_once(monkeypatch):
 
 # ───────── page explanations on demand ─────────
 
-def test_upload_does_not_explain_pages_until_asked(client, user, gemini):
+def test_upload_explains_every_page_straight_away(client, user, gemini):
     pid = upload(client, user, text_pdf(3), explain=False).json()["id"]
-    assert gemini.pages_sent() == []  # extraction only
-    db = SessionLocal()
-    assert db.query(models.PageSummary).filter_by(paper_id=pid).count() == 0
-    db.close()
+    assert sorted(gemini.pages_sent()) == [1, 2, 3]  # no button to press
     outline = client.get(f"/papers/{pid}/outline", headers=bearer(user)).json()
-    assert [(p["page_number"], p["has_text"], p["explanation"]) for p in outline["pages"]] == [(1, True, None), (2, True, None), (3, True, None)]
+    assert [(p["page_number"], p["has_text"], p["explanation"]) for p in outline["pages"]] == [(1, True, "ready"), (2, True, "ready"), (3, True, "ready")]
     assert client.get(f"/papers/{pid}", headers=bearer(user)).json()["status"] == "ready"
-
-    r = client.post(f"/papers/{pid}/explain", headers=bearer(user)).json()
-    assert r["requested"] == 3 and sorted(gemini.pages_sent()) == [1, 2, 3]
-    outline = client.get(f"/papers/{pid}/outline", headers=bearer(user)).json()
-    assert [p["explanation"] for p in outline["pages"]] == ["ready", "ready", "ready"]
     # asking again never re-explains
     again = client.post(f"/papers/{pid}/explain", headers=bearer(user)).json()
     assert again["requested"] == 0 and sorted(gemini.pages_sent()) == [1, 2, 3]
@@ -370,10 +362,11 @@ def test_upload_does_not_explain_pages_until_asked(client, user, gemini):
 
 def test_page_text_endpoint_returns_extracted_text(client, user, gemini):
     pid = upload(client, user, text_pdf(2), explain=False).json()["id"]
+    before = len(gemini.calls)
     page = client.get(f"/papers/{pid}/pages/2/text", headers=bearer(user)).json()
     assert page["page_number"] == 2 and page["status"] == "ready" and "Page 2." in page["text"]
     assert client.get(f"/papers/{pid}/pages/9/text", headers=bearer(user)).status_code == 404
-    assert gemini.calls == []
+    assert len(gemini.calls) == before  # reading the text never calls the AI
 
 
 def test_explain_refuses_scanned_pdf(client, user, gemini):
@@ -453,8 +446,14 @@ def test_switching_level_mid_way_stops_the_old_level(client, user, gemini, monke
     assert queued[-1] == "Pro" and _paper_count(user, client) == 1
 
 
-def test_choosing_a_level_before_asking_for_notes_starts_nothing(client, user, gemini):
+def test_choosing_a_level_on_a_paper_without_notes_starts_nothing(client, user, gemini):
+    """A paper uploaded before explanations started on their own has none yet: a level choice is only saved."""
     pid = upload(client, user, text_pdf(2), explain=False).json()["id"]
+    db = SessionLocal()
+    db.query(models.PageSummary).filter_by(paper_id=pid).delete()
+    db.commit()
+    db.close()
+    gemini.calls.clear()
     client.patch(f"/papers/{pid}", headers=bearer(user), data={"level": "Beginner"})
     assert client.get(f"/papers/{pid}", headers=bearer(user)).json()["level"] == "Beginner"
     db = SessionLocal()
@@ -516,3 +515,72 @@ def test_one_users_cancel_does_not_touch_another_users_upload(client, user, gemi
     r = client.post("/papers", headers=bearer(user), files={"file": ("paper.pdf", text_pdf(2), "application/pdf")},
                     data={"level": "Medium", "upload_id": "shared-id"})
     assert r.status_code == 200 and _paper_count(user, client) == 1
+
+
+
+# ───────── page-wise explanations: automatic, front and back matter skipped ─────────
+
+from app import page_roles  # noqa: E402
+
+LONG = " ".join(["The experiment measured recall after spaced and massed practice in two groups of students."] * 12)
+
+
+def paper_pdf() -> bytes:
+    """A realistic paper: title page, abstract page, two body pages, references."""
+    doc = fitz.open()
+    pages = [
+        "Spaced Retrieval and Long-Term Memory\nA. Author, B. Author\nUniversity of Somewhere",
+        "Abstract\nWe test whether spaced retrieval improves delayed recall.\nKeywords: memory, spacing, retrieval",
+        "1. Introduction\n" + LONG,
+        "2. Method\n" + LONG,
+        "4. Results\n" + LONG,
+        "5. Discussion\n" + LONG,
+        "References\n[1] Smith, J. (2019). Spacing effects. Journal of Memory, 12, 1-10.\n[2] Lee, K. et al. (2020). Retrieval. Mind, 3, 4-9.",
+    ]
+    for text in pages:
+        page = doc.new_page()
+        page.insert_textbox(fitz.Rect(54, 54, 560, 800), text, fontsize=9)
+    return doc.tobytes()
+
+
+def test_page_roles_skip_front_and_back_matter_only():
+    total = 12
+    assert page_roles.page_role(1, "Spaced Retrieval and Memory\nA. Author", total) == "front"  # title page
+    assert page_roles.page_role(2, "Abstract\nWe test spacing.\nKeywords: memory", total) == "front"
+    assert page_roles.page_role(1, "Abstract\nWe test spacing.\n1. Introduction\n" + LONG, total) == page_roles.CONTENT  # abstract + body
+    assert page_roles.page_role(5, "3. Results\n" + LONG, total) == page_roles.CONTENT
+    assert page_roles.page_role(11, "References\n[1] Smith, J. (2019). A. B, 1-2.", total) == "references"
+    assert page_roles.page_role(3, "Contents\n1 Introduction .......... 1\n2 Method .......... 4\n3 Results .......... 7\n4 Discussion .......... 9", total) == "contents"
+    assert page_roles.page_role(10, "Acknowledgements\nWe thank our participants.", total) == "acknowledgements"
+    # never skips everything
+    assert page_roles.roles([(1, "Abstract\nOnly an abstract.")]) == {1: page_roles.CONTENT}
+    # a short document's short pages are content
+    assert page_roles.page_role(1, "Page 1. A short note.", 3) == page_roles.CONTENT
+
+
+def test_upload_skips_title_abstract_and_references(client, user, gemini):
+    pid = upload(client, user, paper_pdf(), explain=False).json()["id"]
+    assert sorted(set(gemini.pages_sent())) == [3, 4, 5, 6]  # only the body reaches the AI
+    data = client.get(f"/papers/{pid}/explanations", headers=bearer(user)).json()
+    by_page = {p["page_number"]: p for p in data["pages"]}
+    assert [by_page[n]["status"] for n in range(1, 8)] == ["skipped", "skipped", "ready", "ready", "ready", "ready", "skipped"]
+    assert by_page[1]["reason"] == "Title page and abstract" and by_page[7]["reason"] == "References"
+    assert by_page[3]["summary"].startswith("Explanation of page 3") and by_page[3]["key_points"]
+    assert by_page[1]["summary"] is None  # a skipped page has no explanation
+    # skipped pages don't make the paper "partial"
+    assert client.get(f"/papers/{pid}", headers=bearer(user)).json()["status"] == "ready"
+
+
+def test_level_switch_keeps_skipped_pages_skipped(client, user, gemini):
+    pid = upload(client, user, paper_pdf(), explain=False).json()["id"]
+    gemini.calls.clear()
+    client.patch(f"/papers/{pid}", headers=bearer(user), data={"level": "Pro"})
+    assert sorted(set(gemini.pages_sent())) == [3, 4, 5, 6]
+    data = client.get(f"/papers/{pid}/explanations", headers=bearer(user)).json()
+    assert data["level"] == "Pro" and [p["status"] for p in data["pages"]].count("skipped") == 3
+
+
+def test_explanations_are_owner_only(client, user, gemini):
+    pid = upload(client, user, text_pdf(2), explain=False).json()["id"]
+    other = register(client, email="explain-snoop@example.com").json()["access_token"]
+    assert client.get(f"/papers/{pid}/explanations", headers=bearer(other)).status_code == 404

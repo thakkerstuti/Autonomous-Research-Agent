@@ -28,7 +28,7 @@ export function NotesLevel({ paperId }: { paperId: string }) {
   const [busy, setBusy] = useState<"level" | "stop" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const textPages = pages.filter((p) => p.has_text);
+  const textPages = pages.filter((p) => p.has_text && p.explanation !== "skipped"); // front and back matter aren't explained
   if (!paper || paper.status === "needs_ocr" || !textPages.length) return null;
   const requested = textPages.filter((p) => p.explanation);
   const ready = requested.filter((p) => p.explanation === "ready").length;

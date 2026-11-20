@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 import app.models as models
-from app import storage, study, tasks
+from app import page_roles, storage, study, tasks
 from app.auth.deps import get_current_user
 from app.database import get_db
 from app.log import get_logger
@@ -106,6 +106,31 @@ def _drop_waiting(db: Session, paper_id: str, keep_level: str | None = None) -> 
     return q.delete(synchronize_session=False)
 
 
+def _queue_pages(db: Session, paper: models.Paper, level: str) -> int:
+    """Add the page explanations missing at this level: content pages are queued for the AI; front and
+    back matter (title page, abstract, contents, references, acknowledgements) are recorded as skipped,
+    with the reason in `summary`, and never reach the AI. Returns how many pages were queued. No commit."""
+    pages = (db.query(models.PaperPage).filter(models.PaperPage.paper_id == paper.id, models.PaperPage.status == "ready")
+             .order_by(models.PaperPage.page_number).all())
+    existing = {
+        s.page_number
+        for s in db.query(models.PageSummary).filter(models.PageSummary.paper_id == paper.id, models.PageSummary.level == level)
+    }
+    role = page_roles.roles([(p.page_number, p.text or "") for p in pages])
+    queued = 0
+    for page in pages:
+        if page.page_number in existing:
+            continue
+        r = role.get(page.page_number, page_roles.CONTENT)
+        if r == page_roles.CONTENT:
+            db.add(models.PageSummary(paper_id=paper.id, page_number=page.page_number, level=level, status="pending"))
+            queued += 1
+        else:
+            db.add(models.PageSummary(paper_id=paper.id, page_number=page.page_number, level=level, status="skipped",
+                                      summary=page_roles.REASONS[r]))
+    return queued
+
+
 def _switch_level(db: Session, paper: models.Paper, level: str) -> str:
     """Switch a paper's explanation level. Notes still waiting at the old level stop, so the
     new level starts straight away. If notes had been asked for, the new level's are queued
@@ -116,15 +141,7 @@ def _switch_level(db: Session, paper: models.Paper, level: str) -> str:
     stopped = _drop_waiting(db, paper.id, keep_level=level)
     queued = 0
     if requested:
-        pages = db.query(models.PaperPage).filter(models.PaperPage.paper_id == paper.id, models.PaperPage.status == "ready").all()
-        existing = {
-            s.page_number
-            for s in db.query(models.PageSummary).filter(models.PageSummary.paper_id == paper.id, models.PageSummary.level == level)
-        }
-        for page in pages:
-            if page.page_number not in existing:
-                db.add(models.PageSummary(paper_id=paper.id, page_number=page.page_number, level=level, status="pending"))
-                queued += 1
+        queued = _queue_pages(db, paper, level)
     db.commit()
     status = tasks.refresh_paper_status(db, paper)
     if status == "processing":
@@ -351,7 +368,13 @@ def upload_paper(
         study.ensure_kit(db, paper.id, study.AUTO_OUTPUTS)
         if ask_questions:
             _start_reflection(db, paper)
+        # Page-wise explanations start straight away, at the chosen level (front and back matter skipped)
+        queued = _queue_pages(db, paper, paper.level)
+        db.commit()
+        tasks.refresh_paper_status(db, paper)
         tasks.enqueue_study(paper.id)
+        if queued:
+            tasks.enqueue_paper(paper.id, paper.level)
 
     return {
         "id": paper.id,
@@ -482,23 +505,41 @@ def get_page_text(paper_id: str, page_number: int, db: Session = Depends(get_db)
     return {"page_number": page.page_number, "status": page.status, "text": page.text or ""}
 
 
+@router.get("/{paper_id}/explanations")
+def get_explanations(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Every page's explanation at the paper's level, in page order: the content, or its state
+    (pending, processing, failed, skipped with the reason). Read-only: never starts any processing."""
+    paper = _owned_paper(db, paper_id, user)
+    rows = {
+        s.page_number: s
+        for s in db.query(models.PageSummary).filter(models.PageSummary.paper_id == paper_id, models.PageSummary.level == paper.level)
+    }
+    pages = db.query(models.PaperPage).filter(models.PaperPage.paper_id == paper_id).order_by(models.PaperPage.page_number)
+    out = []
+    for p in pages:
+        s = rows.get(p.page_number)
+        status = s.status if s else ("no_text" if p.status != "ready" else None)
+        out.append({
+            "page_number": p.page_number,
+            "status": status,
+            "reason": s.summary if s and s.status == "skipped" else None,
+            "summary": s.summary if s and s.status == "ready" else None,
+            "key_points": (s.key_points or []) if s and s.status == "ready" else [],
+            "terms": (s.terms or {}) if s and s.status == "ready" else {},
+            "figures": (s.figures or {}) if s and s.status == "ready" else {},
+            "error": s.error if s and s.status == "failed" else None,
+        })
+    return {"paper_id": paper.id, "level": paper.level, "pages": out}
+
+
 @router.post("/{paper_id}/explain")
 def explain_pages(paper_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Start page-by-page explanations at the paper's level, when the reader opens
     them. Idempotent: pages already queued, running or explained are untouched."""
     paper = _owned_paper(db, paper_id, user)
-    pages = db.query(models.PaperPage).filter(models.PaperPage.paper_id == paper_id, models.PaperPage.status == "ready").all()
-    if not pages:
+    if not db.query(models.PaperPage.id).filter(models.PaperPage.paper_id == paper_id, models.PaperPage.status == "ready").first():
         raise HTTPException(status_code=400, detail="This PDF has no selectable text, so there is nothing to explain.")
-    existing = {
-        s.page_number
-        for s in db.query(models.PageSummary).filter(models.PageSummary.paper_id == paper_id, models.PageSummary.level == paper.level)
-    }
-    added = 0
-    for page in pages:
-        if page.page_number not in existing:
-            db.add(models.PageSummary(paper_id=paper_id, page_number=page.page_number, level=paper.level, status="pending"))
-            added += 1
+    added = _queue_pages(db, paper, paper.level)
     db.commit()
     status = tasks.refresh_paper_status(db, paper)
     if added:

@@ -60,7 +60,8 @@ export function PageNotes({
   const outline = useOutlineQuery(paperId);
   const level = paper?.level ?? null;
   const pages = useMemo(() => outline.data?.pages ?? [], [outline.data]);
-  const textPages = pages.filter((p) => p.has_text);
+  // Front and back matter (title page, abstract, references) are skipped: not counted as pages to explain
+  const textPages = pages.filter((p) => p.has_text && p.explanation !== "skipped");
   const requested = textPages.filter((p) => p.explanation);
   const ready = requested.filter((p) => p.explanation === "ready").length;
   const failed = requested.filter((p) => p.explanation === "failed").length;
@@ -128,7 +129,9 @@ export function PageNotes({
 
   let body: React.ReactNode;
   if (outline.isLoading) body = <TextSkeleton lines={5} />;
-  else if (info && !info.has_text) {
+  else if (info?.explanation === "skipped") {
+    body = <p className="mt-5 text-[14px] leading-relaxed text-ink-soft">This page is front or back matter (a title page, abstract, contents or references), so it isn&rsquo;t explained.</p>;
+  } else if (info && !info.has_text) {
     body = <p className="mt-5 text-[14px] leading-relaxed text-ink-soft">This page has no selectable text (it may be a figure or a scan), so there are no notes for it.</p>;
   } else if (!textPages.length) {
     body = <p className="mt-5 text-[14px] leading-relaxed text-ink-soft">This PDF has no selectable text, so notes can&rsquo;t be written. Scanned papers need OCR first.</p>;
