@@ -817,8 +817,7 @@ html.dark .auth-bg::before { mix-blend-mode: screen; opacity: 0.12; }
   --desk:       228 231 223;
   --desk-line:  rgb(29 42 34 / 0.1);
   --sheet-shadow: 0 0 0 1px rgb(29 42 34 / 0.06), 0 1px 2px rgb(29 42 34 / 0.06), 0 10px 24px -16px rgb(29 42 34 / 0.28);
-  --font-display: var(--nf-heading);
-  --font-heading: var(--nf-heading);
+  --font-heading: var(--nf-display);
   font-synthesis: none;
   background: rgb(var(--bg));
   color: rgb(var(--ink));
@@ -844,9 +843,7 @@ html.dark .studio {
   --desk-line:  rgb(231 235 227 / 0.07);
   --sheet-shadow: 0 0 0 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 16px 36px -18px rgb(0 0 0 / 0.8);
 }
-.font-heading { font-family: var(--font-heading, var(--font-display)), Georgia, serif; font-weight: 400; }
-/* Instrument Serif is already tight: headings in the studio don't need negative tracking */
-.studio .t-page-title, .studio .t-heading, .studio .t-heading-sm, .studio .t-doc-title { font-weight: 400; letter-spacing: -0.005em; }
+.font-heading { font-family: var(--font-heading, var(--font-display)), Georgia, serif; font-optical-sizing: auto; font-weight: 600; letter-spacing: -0.018em; }
 .studio .t-page-title { font-size: 40px; line-height: 1.08; }
 .studio .t-heading { font-size: 25px; line-height: 1.15; }
 .studio .t-heading-sm { font-size: 20px; }

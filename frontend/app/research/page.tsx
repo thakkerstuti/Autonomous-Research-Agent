@@ -740,16 +740,13 @@ function ResearchPage() {
           </p>
         )}
         {!hasMessages ? (
-          // A new conversation: the page title, as on Library and History, and the message box
+          // A new conversation: the page title, as on Library and History; the message box stays at the bottom
           <div className="mx-auto max-w-[760px] px-5 pb-20 pt-10 sm:px-8 sm:pt-14">
             <PageHeader
               className="animate-view-in"
               title="Research"
               description="Ask a question. CogNexa investigates it and answers with sources you can check."
             />
-            <div className="animate-view-in mt-9" style={{ animationDelay: "70ms" }}>
-              <Composer placeholder="Ask a question" disabled={busy} busy={busy} onSend={(t) => send(t)} />
-            </div>
           </div>
         ) : (
           <div className="mx-auto flex max-w-[760px] flex-col gap-12 px-5 pb-16 pt-8 sm:px-8 sm:pt-10">
@@ -794,18 +791,18 @@ function ResearchPage() {
         )}
       </div>
 
-      {hasMessages && (
-        <div className="px-4 pb-4 pt-2 sm:px-8 sm:pb-6">
-          <div className="mx-auto max-w-[760px]">
-            <Composer
-              placeholder={awaitingChoice ? "Choose how to answer above" : "Ask a follow-up, or something new"}
-              disabled={busy || awaitingChoice}
-              busy={busy}
-              onSend={(t) => send(t)}
-            />
-          </div>
+      <div className="px-4 pb-4 pt-2 sm:px-8 sm:pb-6">
+        <div className="mx-auto max-w-[760px]">
+          <Composer
+            placeholder={
+              !hasMessages ? "Ask a question" : awaitingChoice ? "Choose how to answer above" : "Ask a follow-up, or something new"
+            }
+            disabled={busy || awaitingChoice}
+            busy={busy}
+            onSend={(t) => send(t)}
+          />
         </div>
-      )}
+      </div>
     </div>
   );
 }
