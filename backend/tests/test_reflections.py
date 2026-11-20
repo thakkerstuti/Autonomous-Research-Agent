@@ -277,6 +277,7 @@ def test_starting_a_run_never_writes_questions_inside_the_request(client, token,
     """Outside inline test mode the first batch goes to the reflection pool; the request only inserts the row."""
     monkeypatch.delenv("RESEARCH_WORKER", raising=False)
     monkeypatch.delenv("REFLECTION_WORKER", raising=False)
+    monkeypatch.delenv("PAPER_WORKER", raising=False)  # conftest runs paper work inline
     submitted = []
     monkeypatch.setattr(rf._pool, "submit", lambda fn, *a: submitted.append((fn, a)))
     monkeypatch.setattr(research_api, "_submit", lambda fn, *a: None)
@@ -285,3 +286,266 @@ def test_starting_a_run_never_writes_questions_inside_the_request(client, token,
     r = reflection_of(run["session_id"])
     assert r.questions == [] and r.generating_since is not None
     assert submitted and submitted[0][0] is rf.generate_job
+
+
+# ───────── step 4: the routes ─────────
+
+from app import reflection_api, tasks  # noqa: E402
+from test_papers import text_pdf  # noqa: E402
+
+
+@pytest.fixture
+def running(client, token, runs, monkeypatch):
+    """A research run that stays in progress (its engine never runs), with its first batch written."""
+    monkeypatch.setattr(research_api, "_submit", lambda fn, *a: None)
+    run = start(client, token, CHANDRAYAAN)
+    return run["session_id"]
+
+
+def url(sid, tail=""):
+    return f"/research/sessions/{sid}/reflection{tail}"
+
+
+def finish_run(sid):
+    db = SessionLocal()
+    s = db.get(models.ResearchSession, sid)
+    s.status = "ready"
+    s.report = "Chandrayaan-3 landed near the south pole [E1]."
+    s.evidence_log = fake_result(CHANDRAYAAN)["evidence_log"] + [
+        {"id": "E2", "source_title": "Second", "quote": "A second quote", "stance": "neutral", "internal_note": "NOT-PUBLIC"}]
+    s.hypotheses = fake_result(CHANDRAYAAN)["hypotheses"]
+    s.progress = {**(s.progress or {}), "finished_at": datetime.datetime.utcnow().isoformat(), "answer_written": True}
+    db.commit()
+    db.close()
+
+
+def test_get_returns_questions_and_state(client, token, running):
+    data = client.get(url(running), headers=bearer(token)).json()
+    assert data["status"] == "active" and data["kind"] == "research"
+    assert len(data["questions"]) == rf.BATCH_SIZE and data["generating"] is False
+    assert data["run_done"] is False and data["feedback"] is None
+    assert set(data["questions"][0]) == {"id", "text", "kind", "batch", "answer", "skipped"}
+
+
+def test_other_users_get_404_everywhere(client, token, running):
+    other = register(client, email="someone-else@example.com").json()["access_token"]
+    h = bearer(other)
+    qid = client.get(url(running), headers=bearer(token)).json()["questions"][0]["id"]
+    assert client.get(url(running), headers=h).status_code == 404
+    assert client.put(url(running, "/answers"), headers=h, json={"question_id": qid, "answer": "x"}).status_code == 404
+    for tail, body in (("/pause", {"reason": "busy"}), ("/resume", None), ("/next-batch", None), ("/feedback", None)):
+        assert client.post(url(running, tail), headers=h, json=body).status_code == 404, tail
+    assert client.get("/research/sessions/nope/reflection", headers=bearer(token)).status_code == 404
+
+
+def test_answers_validation_and_states(client, token, running):
+    h = bearer(token)
+    q1, q2, q3 = [q["id"] for q in client.get(url(running), headers=h).json()["questions"][:3]]
+    r = client.put(url(running, "/answers"), headers=h, json={"question_id": "not-a-question", "answer": "hi"})
+    assert r.status_code == 400 and r.json()["detail"] == reflection_api.UNKNOWN_QUESTION
+    r = client.put(url(running, "/answers"), headers=h, json={"question_id": q1, "answer": "x" * 1001})
+    assert r.status_code == 400 and "1,000" in r.json()["detail"]
+    data = client.put(url(running, "/answers"), headers=h, json={"question_id": q1, "answer": "  Water ice at the pole  "}).json()
+    assert data["questions"][0]["answer"] == "Water ice at the pole" and data["answered"] == 1
+    data = client.put(url(running, "/answers"), headers=h, json={"question_id": q2, "skipped": True}).json()
+    assert data["questions"][1]["skipped"] is True and data["questions"][1]["answer"] is None
+    data = client.put(url(running, "/answers"), headers=h, json={"question_id": q3, "answer": "   "}).json()
+    assert data["questions"][2]["answer"] is None and data["answered"] == 1  # empty counts as unanswered
+    # answers can still change after the run is over ...
+    finish_run(running)
+    assert client.put(url(running, "/answers"), headers=h, json={"question_id": q1, "answer": "Water ice, and cost"}).status_code == 200
+    # ... until feedback is written
+    assert client.post(url(running, "/feedback"), headers=h).status_code == 200
+    r = client.put(url(running, "/answers"), headers=h, json={"question_id": q1, "answer": "Changed"})
+    assert r.status_code == 409 and r.json()["detail"] == reflection_api.FEEDBACK_LOCKED
+
+
+def test_pause_and_resume(client, token, running):
+    h = bearer(token)
+    assert client.post(url(running, "/pause"), headers=h, json={"reason": "sleepy"}).status_code == 422
+    data = client.post(url(running, "/pause"), headers=h, json={"reason": "busy"}).json()
+    assert data["status"] == "paused" and data["pause_reason"] == "busy"
+    r = client.post(url(running, "/next-batch"), headers=h)
+    assert r.status_code == 409 and r.json()["detail"] == reflection_api.PAUSED
+    data = client.post(url(running, "/resume"), headers=h).json()
+    assert data["status"] == "active" and data["pause_reason"] is None
+    client.post(url(running, "/pause"), headers=h, json={"reason": "idle"})
+    finish_run(running)
+    r = client.post(url(running, "/resume"), headers=h)  # after the run: the finished state, not an error
+    assert r.status_code == 200 and r.json()["status"] == "finished"
+
+
+def test_next_batch_builds_on_answers(client, token, running, runs):
+    h = bearer(token)
+    first = client.get(url(running), headers=h).json()["questions"]
+    client.put(url(running, "/answers"), headers=h, json={"question_id": first[0]["id"], "answer": "I think the south pole has water ice"})
+    data = client.post(url(running, "/next-batch"), headers=h).json()
+    assert len(data["questions"]) == 2 * rf.BATCH_SIZE and data["questions"][-1]["batch"] == 2
+    ctx = runs[-1]
+    assert ctx.answers == [(first[0]["text"], "I think the south pole has water ice")]
+    assert "I think the south pole has water ice" in rf.build_prompt(ctx)
+    texts = [q["text"] for q in data["questions"]]
+    assert len(set(texts)) == len(texts)
+
+
+def test_next_batch_refuses_after_done_at_the_cap_and_when_exhausted(client, token, running):
+    h = bearer(token)
+    db = SessionLocal()
+    r = db.query(models.Reflection).filter_by(session_id=running).one()
+    r.questions = [dict(r.questions[0], id=f"q{i}", text=f"Question number {i} about something?") for i in range(rf.MAX_QUESTIONS)]
+    db.commit()
+    res = client.post(url(running, "/next-batch"), headers=h)
+    assert res.status_code == 409 and res.json()["detail"] == reflection_api.AT_LIMIT
+    r.questions, r.exhausted = r.questions[:5], True
+    db.commit()
+    db.close()
+    res = client.post(url(running, "/next-batch"), headers=h)
+    assert res.status_code == 409 and res.json()["detail"] == reflection_api.NO_MORE
+    finish_run(running)
+    res = client.post(url(running, "/next-batch"), headers=h)
+    assert res.status_code == 409 and res.json()["detail"] == reflection_api.RUN_OVER
+
+
+def test_two_quick_next_batch_calls_start_one_job(client, token, running, monkeypatch):
+    jobs = []
+    monkeypatch.setattr(rf, "submit", lambda fn, *a: jobs.append(a))  # the batch isn't written yet
+    h = bearer(token)
+    a = client.post(url(running, "/next-batch"), headers=h).json()
+    b = client.post(url(running, "/next-batch"), headers=h).json()
+    assert len(jobs) == 1 and a["generating"] and b["generating"]
+    rf.generate_job(*jobs[0])  # the batch arrives; a new call may start another
+    assert client.get(url(running), headers=h).json()["generating"] is False
+    client.post(url(running, "/next-batch"), headers=h)
+    assert len(jobs) == 2
+
+
+def test_next_batch_is_rate_limited(client, token, running, monkeypatch):
+    monkeypatch.setattr(rf, "submit", lambda fn, *a: None)
+    codes = [client.post(url(running, "/next-batch"), headers=bearer(token)).status_code for _ in range(reflection_api.BATCH_LIMIT + 1)]
+    assert codes[:-1] == [200] * reflection_api.BATCH_LIMIT and codes[-1] == 429
+
+
+def test_feedback_rules_citations_and_cache(client, token, running, monkeypatch):
+    h = bearer(token)
+    qs = client.get(url(running), headers=h).json()["questions"]
+    r = client.post(url(running, "/feedback"), headers=h)
+    assert r.status_code == 409 and r.json()["detail"] == reflection_api.NOT_DONE
+    finish_run(running)
+    r = client.post(url(running, "/feedback"), headers=h)
+    assert r.status_code == 400 and r.json()["detail"] == reflection_api.NOTHING_ANSWERED
+    client.put(url(running, "/answers"), headers=h, json={"question_id": qs[0]["id"], "answer": "Water ice near the pole"})
+
+    seen = {}
+
+    def fake_write(subject, qa, findings, **kw):
+        seen.update(findings=findings, valid=kw.get("valid_evidence"), calls=seen.get("calls", 0) + 1)
+        out = rf.FeedbackOut(strengths=["You spotted the water ice; the evidence agrees [E1]. Also [E99]."],
+                             gaps=["Have you thought about cost? Sources show it was low [E2, E77]."],
+                             next_questions=["What next? [E1]", "Why there?", "Who benefits?", "A fourth one?"])
+        return rf._clean_feedback(out, kw.get("valid_evidence"), kw.get("valid_pages"))
+
+    monkeypatch.setattr(rf, "write_feedback", fake_write)
+    data = client.post(url(running, "/feedback"), headers=h).json()
+    fb = data["feedback"]
+    assert fb["strengths"] == ["You spotted the water ice; the evidence agrees [E1]. Also."]
+    assert fb["gaps"] == ["Have you thought about cost? Sources show it was low [E2]."]
+    assert fb["next_questions"] == ["What next?", "Why there?", "Who benefits?"]
+    assert data["feedback_current"] is True
+    # built from the answer and the PUBLIC evidence fields only
+    assert seen["valid"] == {"E1", "E2"}
+    for secret in (HYPOTHESIS, SEARCH_QUERY, "NOT-PUBLIC"):
+        assert secret not in seen["findings"]
+    # stored: asking again doesn't call the model
+    client.post(url(running, "/feedback"), headers=h)
+    assert seen["calls"] == 1
+
+
+def test_feedback_failure_is_friendly_and_stores_nothing(client, token, running, monkeypatch):
+    h = bearer(token)
+    qid = client.get(url(running), headers=h).json()["questions"][0]["id"]
+    client.put(url(running, "/answers"), headers=h, json={"question_id": qid, "answer": "Something"})
+    finish_run(running)
+    for kind, code in (("quota", 429), ("unavailable", 503)):
+        def broken(*a, _kind=kind, **k):
+            raise rf.ReflectionError("down", _kind)
+        monkeypatch.setattr(rf, "write_feedback", broken)
+        r = client.post(url(running, "/feedback"), headers=h)
+        assert r.status_code == code and r.json()["detail"] == research_api.FRIENDLY_ERRORS[code]
+    assert client.get(url(running), headers=h).json()["feedback"] is None
+
+
+def test_clean_citations_keeps_only_real_ids_and_pages():
+    assert rf.clean_citations("Yes [E1, E9] and [E9].", {"E1"}) == "Yes [E1] and."
+    assert rf.clean_citations("See [p.2, p.40] and [p.50].", valid_pages={1, 2, 3}) == "See [p.2] and."
+
+
+# ───────── Paper Study ─────────
+
+def upload_paper(client, token, monkeypatch, **form):
+    monkeypatch.setattr(tasks, "enqueue_study", lambda pid: None)  # the overview stays "being written"
+    r = client.post("/papers", headers=bearer(token), files={"file": ("memory.pdf", text_pdf(3), "application/pdf")},
+                    data={"level": "Medium", **form})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def test_upload_starts_a_paper_reflection_unless_off(client, token, monkeypatch):
+    pid = upload_paper(client, token, monkeypatch)
+    data = client.get(f"/papers/{pid}/reflection", headers=bearer(token)).json()
+    assert data["kind"] == "paper" and data["status"] == "active" and len(data["questions"]) == rf.BATCH_SIZE
+    off = client.post("/papers", headers=bearer(token), files={"file": ("other.pdf", text_pdf(2, words="Another paper about attention heads"), "application/pdf")},
+                      data={"level": "Medium", "ask_questions": "false"}).json()["id"]
+    assert client.get(f"/papers/{off}/reflection", headers=bearer(token)).status_code == 404
+
+
+def test_at_most_one_active_reflection_per_paper(client, token, monkeypatch):
+    pid = upload_paper(client, token, monkeypatch)
+    client.post(f"/papers/{pid}/study/flashcards/generate", headers=bearer(token))  # a new section starts new questions
+    db = SessionLocal()
+    rows = db.query(models.Reflection).filter_by(paper_id=pid).order_by(models.Reflection.created_at).all()
+    statuses = [r.status for r in rows]
+    db.close()
+    assert len(rows) == 2 and statuses == ["finished", "active"]
+    # the new one doesn't repeat the first one's questions
+    texts = [q["text"] for r in rows for q in r.questions]
+    assert len(texts) == 2 * rf.BATCH_SIZE and len(set(texts)) == len(texts)
+
+
+def test_paper_feedback_cites_only_real_pages(client, token, monkeypatch):
+    pid = upload_paper(client, token, monkeypatch)
+    h = bearer(token)
+    qid = client.get(f"/papers/{pid}/reflection", headers=h).json()["questions"][0]["id"]
+    client.put(f"/papers/{pid}/reflection/answers", headers=h, json={"question_id": qid, "answer": "Spacing helps memory"})
+    assert client.post(f"/papers/{pid}/reflection/feedback", headers=h).status_code == 409  # overview not written yet
+    db = SessionLocal()
+    for art in db.query(models.StudyArtifact).filter_by(paper_id=pid).all():  # the overview (and its notes) are written
+        art.status = "ready"
+        if art.kind == "summary":
+            art.content = {"overview": "Spacing improves recall.", "key_findings": [{"text": "Spacing helps", "pages": [2, 99]}]}
+    db.commit()
+    db.close()
+
+    def fake_write(subject, qa, findings, **kw):
+        assert "p.2" in findings and "p.99" not in findings
+        out = rf.FeedbackOut(strengths=["You saw that spacing helps [p.2] [p.99]."], gaps=["Have you thought about sleep? [E1]"],
+                             next_questions=["a?", "b?", "c?"])
+        return rf._clean_feedback(out, kw.get("valid_evidence"), kw.get("valid_pages"))
+
+    monkeypatch.setattr(rf, "write_feedback", fake_write)
+    fb = client.post(f"/papers/{pid}/reflection/feedback", headers=h).json()["feedback"]
+    assert fb["strengths"] == ["You saw that spacing helps [p.2]."]
+    assert fb["gaps"] == ["Have you thought about sleep?"]
+
+
+def test_paper_routes_are_owner_only(client, token, monkeypatch):
+    pid = upload_paper(client, token, monkeypatch)
+    other = bearer(register(client, email="paper-snoop@example.com").json()["access_token"])
+    assert client.get(f"/papers/{pid}/reflection", headers=other).status_code == 404
+    assert client.post(f"/papers/{pid}/reflection/next-batch", headers=other).status_code == 404
+
+
+def test_answers_are_rate_limited_generously(client, token, running):
+    qid = client.get(url(running), headers=bearer(token)).json()["questions"][0]["id"]
+    codes = [client.put(url(running, "/answers"), headers=bearer(token), json={"question_id": qid, "answer": f"draft {i}"}).status_code
+             for i in range(reflection_api.ANSWER_LIMIT + 1)]
+    assert codes[:-1] == [200] * reflection_api.ANSWER_LIMIT and codes[-1] == 429

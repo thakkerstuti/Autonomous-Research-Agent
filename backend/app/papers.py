@@ -151,6 +151,16 @@ def list_papers(db: Session = Depends(get_db), user: models.User = Depends(get_c
     ]
 
 
+def _start_reflection(db: Session, paper: models.Paper) -> None:
+    """Questions while the paper's study output is written. Never affects the upload or the kit."""
+    from app import reflection
+    try:
+        reflection.start_for_paper(db, paper)
+    except Exception as exc:
+        db.rollback()
+        log.warning("reflection start failed paper=%s error=%s", paper.id, type(exc).__name__)
+
+
 @router.post("/uploads/{upload_id}/cancel")
 def cancel_upload(upload_id: str, user: models.User = Depends(get_current_user)):
     """Cancel an upload that is still running. If it had already been saved, say which paper."""
@@ -170,6 +180,7 @@ def upload_paper(
     level: str = Form("Medium"),
     file: UploadFile = File(...),
     upload_id: str = Form(""),
+    ask_questions: bool = Form(True),  # "Think while you wait" while the overview is written
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
@@ -338,6 +349,8 @@ def upload_paper(
         # Only the paper summary starts on its own. Page explanations, flashcards,
         # questions and insights are generated when the reader asks for them.
         study.ensure_kit(db, paper.id, study.AUTO_OUTPUTS)
+        if ask_questions:
+            _start_reflection(db, paper)
         tasks.enqueue_study(paper.id)
 
     return {
