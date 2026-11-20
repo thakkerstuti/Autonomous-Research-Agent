@@ -1,15 +1,16 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { AlertCircle, ArrowRight, FileText } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, FileText, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { PaperWorkspace } from "@/components/paper/workspace/paper-workspace";
 import { StudioBar } from "@/components/paper/studio-bar";
 import { usePaperPagesQueries, usePapersQuery } from "@/lib/queries";
 import { readWorkspace, updateWorkspace } from "@/lib/workspace";
-import { MAX_PDF_MB, MAX_PDF_PAGES, UploadPhase, uploadPaper } from "@/lib/paper-upload";
+import { MAX_PDF_MB, MAX_PDF_PAGES, UploadPhase, cancelUpload, isCancelled, uploadPaper } from "@/lib/paper-upload";
+import { apiClient } from "@/lib/api";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { cn } from "@/lib/utils";
 
@@ -205,6 +206,12 @@ function PaperStudy() {
   const [error, setError] = useState<string | null>(null);
   const [level, setLevel] = useState<Level>("Medium");
   const [upload, setUpload] = useState<{ phase: UploadPhase; pct: number } | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  // The running upload, so it can be cancelled; and the level as it is now (it can change mid-upload)
+  const running = useRef<{ id: string; controller: AbortController } | null>(null);
+  const levelNow = useRef<Level>(level);
+  levelNow.current = level;
   const { data: papers } = usePapersQuery();
 
   const openPaper = useCallback((id: string) => {
@@ -238,16 +245,54 @@ function PaperStudy() {
   const begin = async () => {
     if (!file || upload) return;
     setError(null);
+    setNotice(null);
+    const id = crypto.randomUUID();
+    const controller = new AbortController();
+    running.current = { id, controller };
+    const sentLevel = level;
+    setUpload({ phase: "uploading", pct: 0 });
     try {
-      const result = await uploadPaper(file, level, (phase, pct) => setUpload({ phase, pct }));
+      const result = await uploadPaper(file, sentLevel, (phase, pct) => setUpload({ phase, pct }), { uploadId: id, signal: controller.signal });
+      if (controller.signal.aborted) return; // cancelled as it finished: the cancel handles it
+      // The level was changed while it uploaded: the paper takes the level chosen last
+      if (levelNow.current !== sentLevel) {
+        const form = new FormData();
+        form.append("level", levelNow.current);
+        await apiClient(`/papers/${result.id}`, { method: "PATCH", body: form }).catch(() => {});
+      }
       queryClient.invalidateQueries({ queryKey: ["papers"] });
       // The same PDF again opens the paper already there (the server doesn't store it twice)
       queryClient.invalidateQueries({ queryKey: ["paper", result.id] });
       openPaper(result.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed. Please try again.");
+      if (!isCancelled(err)) setError(err instanceof Error ? err.message : "Upload failed. Please try again.");
     } finally {
+      if (running.current?.id === id) running.current = null;
       setUpload(null);
+    }
+  };
+
+  /** Stop the upload. The server keeps nothing from it; the file and level stay chosen to try again. */
+  const cancel = async () => {
+    const current = running.current;
+    if (!current || cancelling) return;
+    setCancelling(true);
+    current.controller.abort();
+    try {
+      const r = await cancelUpload(current.id);
+      if (r.paper_id) {
+        // It had already been saved a moment before the cancel
+        queryClient.invalidateQueries({ queryKey: ["papers"] });
+        setNotice("It finished saving just before you cancelled, so it's in Recently uploaded below.");
+      } else {
+        setNotice("Upload cancelled. Nothing was saved.");
+      }
+    } catch {
+      setNotice("Upload cancelled.");
+    } finally {
+      running.current = null;
+      setUpload(null);
+      setCancelling(false);
     }
   };
 
@@ -295,7 +340,9 @@ function PaperStudy() {
                 )}
 
                 <h2 className="mt-8 font-serif text-[21px] leading-tight text-ink">How should CogNexa explain it?</h2>
-                <p className="mt-1.5 text-[13px] text-ink-soft">Pick the depth that fits your background. You can switch later.</p>
+                <p className="mt-1.5 text-[13px] text-ink-soft">
+                  {busy ? "You can still change it while the PDF uploads." : "Pick the depth that fits your background. You can switch later."}
+                </p>
 
                 <div role="radiogroup" aria-label="Explanation level" className="mt-5 grid gap-2 sm:grid-cols-3">
                   {LEVELS.map(({ level: l, desc }) => (
@@ -304,7 +351,7 @@ function PaperStudy() {
                       type="button"
                       role="radio"
                       aria-checked={level === l}
-                      disabled={busy}
+                      disabled={cancelling}
                       onClick={() => setLevel(l)}
                       className={cn(
                         "border px-4 py-3.5 text-left transition-colors disabled:opacity-60",
@@ -320,14 +367,29 @@ function PaperStudy() {
                 {upload && <UploadProgress phase={upload.phase} pct={upload.pct} />}
 
                 <div className="mt-8 flex items-center justify-between gap-3">
-                  <button type="button" onClick={() => setStep("upload")} disabled={busy} className="text-[12.5px] text-ink-soft transition-colors hover:text-ink disabled:opacity-40">
-                    Back
-                  </button>
+                  {busy ? (
+                    <button
+                      type="button"
+                      onClick={cancel}
+                      disabled={cancelling}
+                      className="inline-flex h-9 items-center gap-2 rounded-[3px] border border-line-hover px-4 text-[12.5px] font-medium text-ink transition-colors hover:border-ink-faint disabled:opacity-60"
+                    >
+                      {cancelling ? <ThinkingMark active size={12} /> : <X size={13} />}
+                      {cancelling ? "Cancelling…" : "Cancel upload"}
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => { setNotice(null); setStep("upload"); }} className="inline-flex items-center gap-1.5 text-[12.5px] text-ink-soft transition-colors hover:text-ink">
+                      <ArrowLeft size={13} /> Choose another file
+                    </button>
+                  )}
                   <button type="button" onClick={begin} disabled={busy} className="inline-flex h-9 items-center gap-2 rounded-[3px] bg-primary px-5 text-[12.5px] font-medium text-on-primary transition-opacity hover:opacity-90 disabled:opacity-60">
                     {busy && <ThinkingMark active size={12} />}
-                    Begin study session
+                    {busy ? "Preparing the paper…" : "Begin study session"}
                   </button>
                 </div>
+                {notice && !busy && (
+                  <p role="status" className="mt-4 text-[13px] text-ink-soft">{notice}</p>
+                )}
                 {error && (
                   <p role="alert" className="mt-4 flex items-center gap-2 text-[13px] text-bad">
                     <AlertCircle size={14} className="flex-shrink-0" /> {error}

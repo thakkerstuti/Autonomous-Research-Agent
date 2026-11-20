@@ -3,7 +3,7 @@
  * uses XMLHttpRequest. It goes straight to the backend (API_BASE: the Render URL
  * in production, never the Vercel auth proxy) with the in-memory bearer token.
  */
-import { API_BASE } from "./api";
+import { API_BASE, apiClient } from "./api";
 import { ApiError } from "./api-error";
 import { getAccessToken, recoverFromUnauthorized } from "./auth";
 
@@ -17,13 +17,22 @@ export interface UploadResult {
   page_count: number;
   text_pages: number;
   needs_ocr: boolean;
+  /** The same PDF was already in the library: this is that paper, nothing new was saved. */
+  duplicate?: boolean;
 }
+
+/** Thrown when the reader cancels: nothing was saved. */
+export const UPLOAD_CANCELLED = "Upload cancelled. Nothing was saved.";
+export const isCancelled = (err: unknown) => err instanceof ApiError && err.message === UPLOAD_CANCELLED;
 
 export type UploadPhase = "uploading" | "extracting";
 
-function send(file: File, level: string, token: string | null, onProgress: (phase: UploadPhase, pct: number) => void) {
+function send(file: File, level: string, uploadId: string, token: string | null, onProgress: (phase: UploadPhase, pct: number) => void, signal?: AbortSignal) {
   return new Promise<{ status: number; body: any }>((resolve, reject) => {
+    if (signal?.aborted) return reject(new ApiError(0, UPLOAD_CANCELLED));
     const xhr = new XMLHttpRequest();
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.onabort = () => reject(new ApiError(0, UPLOAD_CANCELLED));
     xhr.open("POST", `${API_BASE}/papers`);
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.upload.onprogress = (e) => {
@@ -43,6 +52,7 @@ function send(file: File, level: string, token: string | null, onProgress: (phas
     const form = new FormData();
     form.append("file", file);
     form.append("level", level);
+    form.append("upload_id", uploadId);
     onProgress("uploading", 0);
     xhr.send(form);
   });
@@ -51,16 +61,26 @@ function send(file: File, level: string, token: string | null, onProgress: (phas
 export async function uploadPaper(
   file: File,
   level: string,
-  onProgress: (phase: UploadPhase, pct: number) => void
+  onProgress: (phase: UploadPhase, pct: number) => void,
+  options: { uploadId?: string; signal?: AbortSignal } = {}
 ): Promise<UploadResult> {
-  let res = await send(file, level, await getAccessToken(), onProgress);
+  const uploadId = options.uploadId ?? crypto.randomUUID();
+  let res = await send(file, level, uploadId, await getAccessToken(), onProgress, options.signal);
   if (res.status === 401) {
     const renewed = await recoverFromUnauthorized();
-    if (renewed) res = await send(file, level, renewed, onProgress);
+    if (renewed) res = await send(file, level, uploadId, renewed, onProgress, options.signal);
   }
+  if (res.status === 409 && res.body?.detail === UPLOAD_CANCELLED) throw new ApiError(409, UPLOAD_CANCELLED);
   if (res.status < 200 || res.status >= 300) {
     const detail = typeof res.body?.detail === "string" ? res.body.detail : `Upload failed (HTTP ${res.status}).`;
     throw new ApiError(res.status, detail, res.body);
   }
   return res.body as UploadResult;
 }
+
+/**
+ * Cancel an upload that is still running. The server keeps nothing from it, unless it had
+ * already finished saving: then the saved paper's id comes back.
+ */
+export const cancelUpload = (uploadId: string) =>
+  apiClient<{ cancelled: boolean; paper_id: string | null }>(`/papers/uploads/${encodeURIComponent(uploadId)}/cancel`, { method: "POST" });

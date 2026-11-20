@@ -1,6 +1,8 @@
 import os
 import asyncio
 import json
+import threading
+import time
 
 import fitz  # PyMuPDF
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
@@ -38,6 +40,42 @@ def _check_level(level: str) -> str:
     if level not in tasks.LEVELS:
         raise HTTPException(status_code=400, detail=f"Level must be one of: {', '.join(tasks.LEVELS)}.")
     return level
+
+
+# ───────── cancelling an upload ─────────
+# The reader can cancel while the PDF is uploading or its pages are being extracted. The
+# upload checks for a cancel at each step and, if there is one, keeps nothing: no paper,
+# no pages, no stored file. (One server process, so this in-memory record is shared.)
+CANCELLED_MESSAGE = "Upload cancelled. Nothing was saved."
+_upload_lock = threading.Lock()
+_cancelled: dict[str, float] = {}   # "user:upload" -> when it was cancelled
+_finished: dict[str, str] = {}      # "user:upload" -> the paper it saved (a cancel arrived too late)
+_KEEP_SECONDS = 30 * 60
+
+
+def _upload_key(user: models.User, upload_id: str) -> str | None:
+    upload_id = (upload_id or "").strip()
+    return f"{user.id}:{upload_id[:64]}" if upload_id else None
+
+
+def _prune(now: float) -> None:
+    for key, at in list(_cancelled.items()):
+        if now - at > _KEEP_SECONDS:
+            _cancelled.pop(key, None)
+            _finished.pop(key, None)
+
+
+def _is_cancelled(key: str | None) -> bool:
+    if not key:
+        return False
+    with _upload_lock:
+        return key in _cancelled
+
+
+def _check_cancelled(key: str | None, user: models.User) -> None:
+    if _is_cancelled(key):
+        log.info("upload cancelled user=%s", user.id[:8])
+        raise HTTPException(status_code=409, detail=CANCELLED_MESSAGE)
 
 
 def _reject(user: models.User, reason: str, status: int = 400, **facts) -> HTTPException:
@@ -113,14 +151,30 @@ def list_papers(db: Session = Depends(get_db), user: models.User = Depends(get_c
     ]
 
 
+@router.post("/uploads/{upload_id}/cancel")
+def cancel_upload(upload_id: str, user: models.User = Depends(get_current_user)):
+    """Cancel an upload that is still running. If it had already been saved, say which paper."""
+    key = _upload_key(user, upload_id)
+    if not key:
+        raise HTTPException(status_code=400, detail="Unknown upload.")
+    now = time.time()
+    with _upload_lock:
+        _prune(now)
+        _cancelled[key] = now
+        saved = _finished.get(key)
+    return {"cancelled": saved is None, "paper_id": saved}
+
+
 @router.post("")
 def upload_paper(
     level: str = Form("Medium"),
     file: UploadFile = File(...),
+    upload_id: str = Form(""),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
     level = _check_level(level)
+    cancel_key = _upload_key(user, upload_id)
     name = (file.filename or "").strip()
     if not name.lower().endswith(".pdf"):
         raise _reject(user, "Only .pdf files can be studied.", name_ok=False)
@@ -135,6 +189,7 @@ def upload_paper(
             raise _reject(user, f"This PDF is larger than {MAX_MB} MB.", status=413, bytes_over=size)
         chunks.append(chunk)
     data = b"".join(chunks)
+    _check_cancelled(cancel_key, user)
 
     if not data.startswith(b"%PDF"):
         raise _reject(user, "This file isn't a valid PDF.", bytes=size, signature=False)
@@ -179,6 +234,7 @@ def upload_paper(
 
     # The same PDF uploaded again opens the paper already there: nothing is stored or
     # counted twice. Only the explanation level changes, when a different one was picked.
+    _check_cancelled(cancel_key, user)
     same = _same_paper(db, user, size, page_count, extracted)
     if same:
         if same.level != level:
@@ -206,6 +262,13 @@ def upload_paper(
         except storage.StorageError as exc:
             log.warning("file store failed user=%s bytes=%d error=%s", user.id[:8], size, exc)
             raise HTTPException(status_code=503, detail="The PDF couldn't be stored right now, so nothing was saved. Please try again.")
+        if _is_cancelled(cancel_key):
+            # Only the object this request just created (uploads never overwrite)
+            try:
+                storage.remove_object(storage_path)
+            except storage.StorageError as cleanup:
+                log.error("orphan file left paper=%s cleanup_error=%s", paper_id, cleanup)
+            _check_cancelled(cancel_key, user)
     elif not storage.local_files_allowed():
         log.error("upload refused: file storage is not configured in production")
         raise HTTPException(status_code=503, detail="File storage isn't configured on the server, so uploads are paused.")
@@ -226,7 +289,24 @@ def upload_paper(
         db.flush()
         for number, text, st in extracted:
             db.add(models.PaperPage(paper_id=paper.id, page_number=number, text=text, status=st))
-        db.commit()
+        # Saving and the cancel check happen together, so a cancel either keeps everything
+        # out or arrives after the save and is told which paper was saved.
+        with _upload_lock:
+            cancelled = bool(cancel_key) and cancel_key in _cancelled
+            if not cancelled:
+                db.commit()
+                if cancel_key:
+                    _finished[cancel_key] = paper.id
+        if cancelled:
+            db.rollback()
+            if storage_path:
+                try:
+                    storage.remove_object(storage_path)
+                except storage.StorageError as cleanup:
+                    log.error("orphan file left paper=%s cleanup_error=%s", paper_id, cleanup)
+            raise HTTPException(status_code=409, detail=CANCELLED_MESSAGE)
+    except HTTPException:
+        raise
     except Exception as exc:
         db.rollback()
         if storage_path:

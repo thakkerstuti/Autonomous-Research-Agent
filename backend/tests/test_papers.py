@@ -461,3 +461,58 @@ def test_choosing_a_level_before_asking_for_notes_starts_nothing(client, user, g
     assert db.query(models.PageSummary).filter_by(paper_id=pid).count() == 0
     db.close()
     assert gemini.pages_sent() == []
+
+
+# ───────── cancelling an upload ─────────
+
+def test_cancelled_upload_keeps_nothing(client, user, gemini, monkeypatch):
+    # The cancel arrives while the pages are being extracted
+    real_check = papers._same_paper
+
+    def cancel_midway(*args, **kwargs):
+        client.post("/papers/uploads/u-1/cancel", headers=bearer(user))
+        return real_check(*args, **kwargs)
+
+    monkeypatch.setattr(papers, "_same_paper", cancel_midway)
+    r = client.post("/papers", headers=bearer(user), files={"file": ("paper.pdf", text_pdf(2), "application/pdf")},
+                    data={"level": "Medium", "upload_id": "u-1"})
+    assert r.status_code == 409 and "Nothing was saved" in r.json()["detail"]
+    assert _paper_count(user, client) == 0
+    db = SessionLocal()
+    assert db.query(models.PaperPage).count() == 0
+    db.close()
+
+
+def test_cancel_just_before_saving_keeps_nothing(client, user, gemini, monkeypatch):
+    orig = papers._check_cancelled
+    calls = {"n": 0}
+
+    def late_cancel(key, u):
+        calls["n"] += 1
+        if calls["n"] == 2:  # after extraction: let it pass, then cancel before the save
+            orig(key, u)
+            client.post("/papers/uploads/u-2/cancel", headers=bearer(user))
+            return None
+        return orig(key, u)
+
+    monkeypatch.setattr(papers, "_check_cancelled", late_cancel)
+    r = client.post("/papers", headers=bearer(user), files={"file": ("paper.pdf", text_pdf(2), "application/pdf")},
+                    data={"level": "Medium", "upload_id": "u-2"})
+    assert r.status_code == 409
+    assert _paper_count(user, client) == 0
+
+
+def test_cancel_after_the_save_names_the_saved_paper(client, user, gemini):
+    r = client.post("/papers", headers=bearer(user), files={"file": ("paper.pdf", text_pdf(2), "application/pdf")},
+                    data={"level": "Medium", "upload_id": "u-3"})
+    pid = r.json()["id"]
+    late = client.post("/papers/uploads/u-3/cancel", headers=bearer(user)).json()
+    assert late == {"cancelled": False, "paper_id": pid}
+
+
+def test_one_users_cancel_does_not_touch_another_users_upload(client, user, gemini):
+    other = register(client, email="other-uploader@example.com").json()["access_token"]
+    client.post("/papers/uploads/shared-id/cancel", headers=bearer(other))
+    r = client.post("/papers", headers=bearer(user), files={"file": ("paper.pdf", text_pdf(2), "application/pdf")},
+                    data={"level": "Medium", "upload_id": "shared-id"})
+    assert r.status_code == 200 and _paper_count(user, client) == 1

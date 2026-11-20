@@ -7,12 +7,18 @@
  */
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Square } from "lucide-react";
+import { Check, ChevronDown, Square } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import { useOutlineQuery, usePaperQuery } from "@/lib/queries";
 import { ThinkingMark } from "@/components/research/thinking-mark";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
-const LEVELS = ["Beginner", "Medium", "Pro"] as const;
+const LEVELS = [
+  { level: "Beginner", desc: "Plain language, every term explained, simple analogies." },
+  { level: "Medium", desc: "Assumes the basics. Focuses on the why." },
+  { level: "Pro", desc: "Concise and technical. Contribution and results." },
+] as const;
 const WORKING = new Set(["pending", "processing"]);
 
 export function NotesLevel({ paperId }: { paperId: string }) {
@@ -46,8 +52,9 @@ export function NotesLevel({ paperId }: { paperId: string }) {
     }
   };
 
+  const current = paper.level ?? "Medium";
   const changeLevel = (next: string) => {
-    if (next === (paper.level ?? "Medium") || busy) return;
+    if (next === current || busy) return;
     const form = new FormData();
     form.append("level", next);
     void act("level", () => apiClient(`/papers/${paperId}`, { method: "PATCH", body: form }));
@@ -55,23 +62,37 @@ export function NotesLevel({ paperId }: { paperId: string }) {
 
   return (
     <div className="flex flex-shrink-0 items-center gap-2.5 text-[12.5px] sm:gap-3">
-      <label className="flex items-center gap-1.5 text-ink-soft" title="How page notes are explained. You can switch at any time.">
-        <span className="hidden sm:inline">Level</span>
-        <span className="relative flex items-center">
-          <select
-            value={paper.level ?? "Medium"}
-            onChange={(e) => changeLevel(e.target.value)}
-            disabled={busy !== null}
-            aria-label="Explanation level"
-            className="h-8 cursor-pointer appearance-none rounded-[3px] border border-line bg-bg pl-2 pr-6 sm:pl-2.5 sm:pr-7 text-[12.5px] font-medium text-ink transition-colors hover:border-line-hover focus:border-accent/60 focus:outline-none disabled:opacity-60"
-          >
-            {LEVELS.map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </select>
-          <ChevronDown size={13} className="pointer-events-none absolute right-1.5 text-ink-soft sm:right-2" />
-        </span>
-      </label>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          disabled={busy !== null}
+          aria-label={`Explanation level: ${current}. Change level`}
+          className="group flex h-8 items-center gap-1.5 rounded-[3px] border border-line bg-bg pl-2 pr-1.5 text-ink transition-colors hover:border-line-hover focus-visible:border-accent/60 focus-visible:outline-none disabled:opacity-60 data-[state=open]:border-accent/60 sm:pl-2.5 sm:pr-2"
+        >
+          <span className="hidden text-ink-soft sm:inline">Level</span>
+          <span className="font-medium">{current}</span>
+          <ChevronDown size={13} className="text-ink-soft transition-transform duration-150 group-data-[state=open]:rotate-180" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="studio w-[264px] !bg-surface p-1.5">
+          <p className="px-2.5 pb-1.5 pt-1 text-[11.5px] leading-snug text-ink-faint">
+            How page notes are explained. Pages already written at a level are kept.
+          </p>
+          {LEVELS.map(({ level: l, desc }) => (
+            <DropdownMenuItem
+              key={l}
+              onSelect={() => changeLevel(l)}
+              className={cn("items-start gap-2.5 py-2.5", l === current && "bg-accent-soft text-ink")}
+            >
+              <span className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center text-accent">
+                {l === current && <Check size={14} />}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium text-ink">{l}</span>
+                <span className="mt-0.5 block text-[12px] leading-snug text-ink-soft">{desc}</span>
+              </span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {working && (
         <>
