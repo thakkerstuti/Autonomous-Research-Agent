@@ -25,13 +25,13 @@ from app.db_url import engine_options, normalise_database_url
 from app.models import Base
 
 BACKEND = Path(__file__).resolve().parent.parent
-HEAD = "b6d2f8a4c1e9"      # latest revision
+HEAD = "d3a8c5e1f472"      # latest revision
 BASELINE = "e7de0666b0a1"  # the revision that creates the original tables
 BASELINE_TABLES = {
     "users", "oauth_accounts", "refresh_tokens", "auth_tokens",
     "papers", "paper_pages", "page_summaries", "study_artifacts", "research_sessions",
 }
-APP_TABLES = BASELINE_TABLES | {"research_documents", "research_document_versions", "chat_messages"}
+APP_TABLES = BASELINE_TABLES | {"research_documents", "research_document_versions", "chat_messages", "reflections"}
 
 
 def alembic_config(url: str | None = None, connection=None) -> Config:
@@ -149,6 +149,41 @@ def test_chat_messages_migration_keeps_existing_data(tmp_path):
     engine.dispose()
 
 
+def test_reflections_migration_keeps_existing_data(tmp_path):
+    """A database at the previous revision with a session and chat: everything stays, reflections are added."""
+    url = sqlite_url(tmp_path / "before-reflections.db")
+    command.upgrade(alembic_config(url), "b6d2f8a4c1e9")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text("insert into users (id, email, email_verified) values ('u1', 'ada@example.com', 1)"))
+        conn.execute(text("insert into research_sessions (id, user_id, question, output_format, status, report) "
+                          "values ('s1', 'u1', 'A question', 'quick', 'ready', 'A report')"))
+        conn.execute(text("insert into chat_messages (id, session_id, user_id, role, content, used_web_search) "
+                          "values ('m1', 's1', 'u1', 'user', 'Hello', 0)"))
+
+    command.upgrade(alembic_config(url), "head")
+
+    with engine.begin() as conn:
+        assert conn.execute(text("select report from research_sessions")).scalar() == "A report"
+        assert conn.execute(text("select content from chat_messages")).scalar() == "Hello"
+        assert "reflections" in set(inspect(conn).get_table_names())
+        assert schema_differences(conn) == []
+        conn.execute(text("insert into reflections (id, user_id, session_id, thread_id, status, questions, exhausted) "
+                          "values ('r1', 'u1', 's1', 's1', 'active', '[]', 0)"))
+    with pytest.raises(Exception):  # exactly one of session_id / paper_id
+        with engine.begin() as conn:
+            conn.execute(text("insert into reflections (id, user_id, status, questions, exhausted) "
+                              "values ('r2', 'u1', 'active', '[]', 0)"))
+    with pytest.raises(Exception):  # one reflection per research run
+        with engine.begin() as conn:
+            conn.execute(text("insert into reflections (id, user_id, session_id, status, questions, exhausted) "
+                              "values ('r3', 'u1', 's1', 'active', '[]', 0)"))
+    command.downgrade(alembic_config(url), "b6d2f8a4c1e9")  # never drops the users' answers
+    with engine.connect() as conn:
+        assert conn.execute(text("select count(*) from reflections")).scalar() == 1
+    engine.dispose()
+
+
 def test_research_documents_migration_keeps_existing_sessions(tmp_path):
     """A database at the previous revision with real research sessions: rows stay, new columns are NULL."""
     url = sqlite_url(tmp_path / "before-documents.db")
@@ -197,6 +232,11 @@ def test_postgresql_sql_creates_every_table_and_enables_row_level_security(tmp_p
     assert re.search(r"CREATE TABLE chat_messages \(", sql)
     assert "CREATE INDEX ix_chat_messages_session_created ON chat_messages (session_id, created_at)" in sql
     assert sql.count("REFERENCES research_sessions (id) ON DELETE CASCADE") >= 2  # documents and chat messages
+    assert re.search(r"CREATE TABLE reflections \(", sql)
+    assert "CONSTRAINT ck_reflections_one_owner CHECK ((session_id IS NULL) <> (paper_id IS NULL))" in sql
+    assert "UNIQUE (session_id)" in sql
+    assert "CREATE INDEX ix_reflections_thread_id ON reflections (thread_id)" in sql
+    assert sql.count("REFERENCES research_sessions (id) ON DELETE CASCADE") >= 3  # documents, chat messages, reflections
     assert "TopSecretPw42" not in sql and "someuser" not in sql and "db.invalid" not in sql  # no credentials in the output
     assert f"'{HEAD}'" in sql
 

@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, UniqueConstraint, Boolean, ForeignKey, Index
+from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, UniqueConstraint, Boolean, ForeignKey, Index, CheckConstraint
 from app.database import Base
 import uuid
 
@@ -105,6 +105,30 @@ class ChatMessage(Base):
     used_web_search = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     __table_args__ = (Index("ix_chat_messages_session_created", "session_id", "created_at"),)
+
+
+class Reflection(Base):
+    """"Think while you wait": questions asked while one research run (or a Paper Study output) is
+    being written, the user's answers, and the feedback comparing them with the result. Exactly one
+    of session_id / paper_id is set. One per research run; a paper can have several over time."""
+    __tablename__ = "reflections"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    session_id = Column(String, ForeignKey("research_sessions.id", ondelete="CASCADE"), unique=True, nullable=True)
+    paper_id = Column(String, ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=True)
+    thread_id = Column(String(36), index=True, nullable=True)
+    status = Column(String(16), nullable=False, default="active")  # active, paused, finished, failed
+    pause_reason = Column(String(16), nullable=True)  # busy, idle
+    # A growing list of {id, text, kind, batch, asked_at, answer, answered_at, skipped}
+    questions = Column(JSON, nullable=False, default=list)
+    feedback = Column(JSON, nullable=True)  # {strengths, gaps, next_questions, answers_key, created_at}
+    generating_since = Column(DateTime, nullable=True)  # a batch is being written (only one at a time)
+    exhausted = Column(Boolean, nullable=False, default=False)  # no new, non-repeating questions came back
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    __table_args__ = (
+        CheckConstraint("(session_id IS NULL) <> (paper_id IS NULL)", name="ck_reflections_one_owner"),
+    )
 
 
 
