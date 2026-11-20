@@ -259,3 +259,156 @@ def generate_batch(ctx: QuestionContext, *, client=None, models: Sequence[str] |
             return kept
         log.info("reflection batch had no new questions attempt=%d", attempt + 1)
     return []
+
+
+# ───────── reflections in the database, and the background jobs ─────────
+# Question jobs have their own small pool, so they never wait behind (or hold up) research runs.
+
+import datetime  # noqa: E402
+import uuid  # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+
+from sqlalchemy.orm import Session  # noqa: E402
+
+from app import models  # noqa: E402
+from app.database import SessionLocal  # noqa: E402
+
+GENERATING_STALE_AFTER = datetime.timedelta(minutes=3)  # a batch job that never finished (e.g. a restart)
+OPEN = ("active", "paused")
+
+_pool = ThreadPoolExecutor(max_workers=int(os.getenv("REFLECTION_WORKERS", "2")), thread_name_prefix="reflection")
+
+
+def _now() -> datetime.datetime:
+    return datetime.datetime.utcnow()
+
+
+def _inline() -> bool:
+    return os.getenv("REFLECTION_WORKER") == "inline" or os.getenv("RESEARCH_WORKER") == "inline"
+
+
+def submit(fn, *args) -> None:
+    """Background work for questions. Inline only in tests; a failure there is logged, never raised."""
+    if _inline():
+        try:
+            fn(*args)
+        except Exception as exc:  # the job records its own failure; nothing reaches the caller
+            log.warning("reflection job error=%s", type(exc).__name__)
+    else:
+        _pool.submit(fn, *args)
+
+
+def thread_questions(db: Session, user_id: str, thread_id: str | None, exclude_id: str | None = None) -> list[str]:
+    """Every question already asked in this conversation's reflections (the no-repeat list)."""
+    if not thread_id:
+        return []
+    rows = db.query(models.Reflection).filter(
+        models.Reflection.user_id == user_id, models.Reflection.thread_id == thread_id).all()
+    out = []
+    for r in rows:
+        if r.id != exclude_id:
+            out += [q.get("text", "") for q in (r.questions or [])]
+    return out
+
+
+def _session_context(db: Session, r: models.Reflection) -> QuestionContext:
+    s = db.get(models.ResearchSession, r.session_id)
+    first = (db.query(models.ResearchSession)
+             .filter(models.ResearchSession.user_id == r.user_id,
+                     (models.ResearchSession.thread_id == r.thread_id) | (models.ResearchSession.id == r.thread_id))
+             .order_by(models.ResearchSession.created_at.asc()).first()) if r.thread_id else None
+    own = [q.get("text", "") for q in (r.questions or [])]
+    return QuestionContext(
+        subject=s.question if s else "",
+        thread_question=first.question if first and s and first.id != s.id else None,
+        answers=[(q.get("text", ""), q.get("answer") or "") for q in (r.questions or []) if q.get("answer")],
+        asked=thread_questions(db, r.user_id, r.thread_id, exclude_id=r.id) + own,
+    )
+
+
+def _paper_context(db: Session, r: models.Reflection) -> QuestionContext:
+    paper = db.get(models.Paper, r.paper_id)
+    pages = (db.query(models.PaperPage)
+             .filter(models.PaperPage.paper_id == r.paper_id, models.PaperPage.status == "ready")
+             .order_by(models.PaperPage.page_number).limit(4).all())
+    earlier = db.query(models.Reflection).filter(
+        models.Reflection.user_id == r.user_id, models.Reflection.paper_id == r.paper_id).all()
+    return QuestionContext(
+        subject=(paper.title or "").removesuffix(".pdf") if paper else "",
+        answers=[(q.get("text", ""), q.get("answer") or "") for q in (r.questions or []) if q.get("answer")],
+        asked=[q.get("text", "") for e in earlier for q in (e.questions or [])],
+        paper_excerpt="\n\n".join(f"Page {p.page_number}: {p.text or ''}" for p in pages)[:EXCERPT_MAX],
+    )
+
+
+def context_for(db: Session, r: models.Reflection) -> QuestionContext:
+    return _paper_context(db, r) if r.paper_id else _session_context(db, r)
+
+
+def _as_questions(items: list[dict], batch: int) -> list[dict]:
+    at = _now().isoformat() + "Z"
+    return [{"id": uuid.uuid4().hex[:12], "text": q["text"], "kind": q["kind"], "batch": batch, "asked_at": at,
+             "answer": None, "answered_at": None, "skipped": False} for q in items]
+
+
+def generate_job(reflection_id: str) -> None:
+    """Write one batch for a reflection (claimed by setting generating_since beforehand). Any failure marks
+    only the reflection as failed; the research run or paper is never touched."""
+    db = SessionLocal()
+    try:
+        r = db.get(models.Reflection, reflection_id)
+        if not r:
+            return
+        ctx = context_for(db, r)
+        ctx.want = min(BATCH_SIZE, MAX_QUESTIONS - len(r.questions or []))
+        batch_no = max([q.get("batch", 0) for q in (r.questions or [])] or [0]) + 1
+        db.close()
+
+        items = generate_batch(ctx) if ctx.want > 0 else []
+
+        db = SessionLocal()
+        r = db.get(models.Reflection, reflection_id)
+        if not r:
+            return
+        if r.status in OPEN:  # a run that finished meanwhile keeps what was asked, gets nothing new
+            r.questions = list(r.questions or []) + _as_questions(items, batch_no)
+            if not items:
+                r.exhausted = True
+        r.generating_since = None
+        db.commit()
+        log.info("reflection batch reflection=%s batch=%d added=%d", reflection_id, batch_no, len(items) if r.status in OPEN else 0)
+    except Exception as exc:
+        log.warning("reflection batch failed reflection=%s error=%s", reflection_id, type(exc).__name__)
+        try:
+            db.rollback()
+            db.close()
+        except Exception:
+            pass
+        db = SessionLocal()
+        r = db.get(models.Reflection, reflection_id)
+        if r:
+            r.generating_since = None
+            if r.status in OPEN:
+                r.status = "failed"
+            db.commit()
+    finally:
+        db.close()
+
+
+def start_for_session(db: Session, s: models.ResearchSession) -> models.Reflection:
+    """A reflection for a research run that has just started, and its first batch in the background."""
+    r = models.Reflection(user_id=s.user_id, session_id=s.id, thread_id=s.thread_id or s.id, status="active",
+                          questions=[], generating_since=_now(), exhausted=False)
+    db.add(r)
+    db.commit()
+    submit(generate_job, r.id)
+    return r
+
+
+def finish_for_session(db: Session, session_id: str) -> None:
+    """The run is over (finished, failed or interrupted): no more questions for it. Uses the caller's
+    session and commits; a reflection whose questions failed keeps that status."""
+    db.query(models.Reflection).filter(
+        models.Reflection.session_id == session_id, models.Reflection.status.in_(OPEN)
+    ).update({"status": "finished", "generating_since": None}, synchronize_session=False)
+    db.commit()

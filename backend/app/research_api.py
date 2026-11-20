@@ -29,7 +29,7 @@ from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, load_only
 
-from app import models, research_paper, research_pdf, storage
+from app import models, reflection, research_paper, research_pdf, storage
 from app.auth.deps import get_current_user
 from app.database import SessionLocal, get_db
 from app.log import get_logger
@@ -224,6 +224,18 @@ def run_job(session_id: str) -> None:
             db.commit()
     finally:
         db.close()
+        _finish_reflection(session_id)  # the run is over either way: no more questions for it
+
+
+def _finish_reflection(session_id: str) -> None:
+    """Stop "Think while you wait" for a run that is over. Never raises: it must not affect the run."""
+    db = SessionLocal()
+    try:
+        reflection.finish_for_session(db, session_id)
+    except Exception as exc:
+        log.warning("reflection finish failed session=%s error=%s", session_id, type(exc).__name__)
+    finally:
+        db.close()
 
 
 def _write_paper(db: Session, s: models.ResearchSession, question: str, result: dict, author: str) -> models.ResearchDocument:
@@ -336,6 +348,11 @@ def _status(s: models.ResearchSession, db: Session | None = None) -> str:
                 s.status, s.error = "failed", "This research was interrupted (the server restarted). Please ask again."
                 s.progress = _advance(s.progress, None, failed=True)
                 db.commit()
+                try:
+                    reflection.finish_for_session(db, s.id)
+                except Exception as exc:
+                    db.rollback()
+                    log.warning("reflection finish failed session=%s error=%s", s.id, type(exc).__name__)
             return "failed"
         return "in_progress"
     return s.status or "ready"
@@ -448,6 +465,8 @@ class RunRequest(BaseModel):
     # Re-run an earlier question of the conversation in another mode ("Detailed analysis", "Research paper"):
     # the question is taken from that session on the server, never from a typed instruction.
     based_on: str | None = None
+    # "Think while you wait": ask the user questions while this run works (the page's setting; on unless sent off)
+    ask_questions: bool = True
 
 
 @router.post("/runs", status_code=202)
@@ -486,6 +505,13 @@ def start_run(body: RunRequest, db: Session = Depends(get_db), user: models.User
     db.refresh(s)
     log.info("research run queued session=%s user=%s mode=%s follow_up=%s based_on=%s",
              s.id, user.id[:8], mode, bool(thread_id), bool(based_on))
+    if body.ask_questions:
+        # One small insert here; the questions themselves are written in their own background pool
+        try:
+            reflection.start_for_session(db, s)
+        except Exception as exc:
+            db.rollback()
+            log.warning("reflection start failed session=%s error=%s", s.id, type(exc).__name__)
     _submit(run_job, s.id)
     db.refresh(s)
     return public_session(s, None, db)
