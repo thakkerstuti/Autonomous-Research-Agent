@@ -27,6 +27,7 @@ import { InsightsView } from "@/components/paper/study/highlights-view";
 import { FlashcardsView } from "@/components/paper/study/flashcards-view";
 import { useStudyActions } from "@/components/paper/study/study-shared";
 import { PageNotes } from "./page-notes";
+import { NotesLevel } from "./notes-level";
 import { AssistantPanel, useAssistant, type AssistantHandle } from "./assistant";
 import { cn } from "@/lib/utils";
 
@@ -322,14 +323,15 @@ export function PaperWorkspace({ paperId, onStudyAnother }: { paperId: string; o
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-bg">
       <StudioBar onBack={onStudyAnother}>
+        <NotesLevel paperId={paperId} />
         {!paneOpen && (
           <button
             type="button"
             onClick={() => showPane("assistant")}
             aria-label="Show notes and assistant"
-            className="flex h-8 items-center gap-2 rounded-[3px] bg-accent-soft px-3 text-[12.5px] text-ink transition-colors hover:bg-accent/[0.16]"
+            className="flex h-8 items-center gap-2 whitespace-nowrap rounded-[3px] bg-accent-soft px-3 text-[12.5px] text-ink transition-colors hover:bg-accent/[0.16]"
           >
-            Ask this paper <ArrowLeft size={13} className="text-accent" />
+            <span className="sm:hidden">Ask</span><span className="hidden sm:inline">Ask this paper</span> <ArrowLeft size={13} className="text-accent" />
           </button>
         )}
       </StudioBar>

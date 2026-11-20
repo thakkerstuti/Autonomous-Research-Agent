@@ -18,17 +18,17 @@ export function StudioBar({ onBack, children }: {
   const theme = useUiStore((s) => s.theme);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
   return (
-    <header className="flex h-[52px] flex-shrink-0 items-center gap-6 border-b border-line bg-bg px-5 sm:px-7">
-      <Link href="/dashboard" className="flex items-center gap-2.5 text-ink" title="CogNexa home">
+    <header className="flex h-[52px] flex-shrink-0 items-center gap-2.5 border-b border-line bg-bg px-4 sm:gap-6 sm:px-7">
+      <Link href="/dashboard" className="hidden items-center gap-2.5 text-ink sm:flex" title="CogNexa home">
         <BrandMark size={20} />
-        <span className="font-display text-[17px] font-semibold tracking-[-0.015em]">CogNexa</span>
+        <span className="hidden font-display text-[17px] font-semibold tracking-[-0.015em] sm:inline">CogNexa</span>
       </Link>
       {onBack ? (
-        <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-[12.5px] text-ink-soft transition-colors hover:text-ink">
+        <button type="button" onClick={onBack} className="flex items-center gap-1.5 whitespace-nowrap text-[12.5px] text-ink-soft transition-colors hover:text-ink">
           <ArrowLeft size={13} /> My papers
         </button>
       ) : (
-        <Link href="/library" className="flex items-center gap-1.5 text-[12.5px] text-ink-soft transition-colors hover:text-ink">
+        <Link href="/library" className="flex items-center gap-1.5 whitespace-nowrap text-[12.5px] text-ink-soft transition-colors hover:text-ink">
           <ArrowLeft size={13} /> My papers
         </Link>
       )}
@@ -40,7 +40,7 @@ export function StudioBar({ onBack, children }: {
         title={theme === "light" ? "Switch to dark" : "Switch to light"}
         className="flex items-center gap-1.5 text-[12px] text-ink-soft transition-colors hover:text-ink"
       >
-        {theme === "light" ? "Light" : "Dark"}
+        <span className="hidden sm:inline">{theme === "light" ? "Light" : "Dark"}</span>
         <Contrast size={12} />
       </button>
     </header>
