@@ -6,6 +6,7 @@
 import { API_BASE, apiClient } from "./api";
 import { ApiError } from "./api-error";
 import { getAccessToken, recoverFromUnauthorized } from "./auth";
+import { getAskQuestions } from "./reflection";
 
 export const MAX_PDF_MB = 25;
 export const MAX_PDF_PAGES = 300;
@@ -53,6 +54,7 @@ function send(file: File, level: string, uploadId: string, token: string | null,
     form.append("file", file);
     form.append("level", level);
     form.append("upload_id", uploadId);
+    form.append("ask_questions", String(getAskQuestions())); // "Think while you wait"
     onProgress("uploading", 0);
     xhr.send(form);
   });

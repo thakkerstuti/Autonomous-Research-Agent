@@ -6,6 +6,7 @@ import { AlertCircle, RotateCcw } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import { useStudyStatusQuery } from "@/lib/queries";
 import { formatPages, kitProgress, sectionState, type KitStatus, type OutputKind } from "@/lib/study-logic";
+import { getAskQuestions } from "@/lib/reflection";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { cn } from "@/lib/utils";
 
@@ -51,7 +52,9 @@ export function useStudyActions(paperId: string) {
   return {
     busy,
     error,
-    generate: (kind: OutputKind) => run(`gen-${kind}`, `/papers/${paperId}/study/${kind}/generate`),
+    // A newly written section starts "Think while you wait" questions unless the user turned them off
+    generate: (kind: OutputKind) =>
+      run(`gen-${kind}`, `/papers/${paperId}/study/${kind}/generate${getAskQuestions() ? "" : "?ask_questions=false"}`),
     retry: () => run("retry", `/papers/${paperId}/study/retry`),
     regenerate: (kind: OutputKind) => run(`regen-${kind}`, `/papers/${paperId}/study/${kind}/regenerate`),
   };
