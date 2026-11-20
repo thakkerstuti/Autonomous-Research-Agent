@@ -145,3 +145,10 @@ test("autosave: a retry succeeding on the second attempt reports saved", async (
   assert.equal(await saver.flush(), true);
   assert.deepEqual(states, ["pending", "saving", "saved"]);
 });
+
+test("feedback: the message said aloud is the server's, or one made from the first strength", async () => {
+  const { spokenFeedback } = await import("../lib/reflection-logic.ts");
+  assert.equal(spokenFeedback({ strengths: [], gaps: [], next_questions: [], spoken: "You already knew this. Keep going!" }), "You already knew this. Keep going!");
+  assert.equal(spokenFeedback({ strengths: ["You spotted the water ice [E1]."], gaps: [], next_questions: [] }), "Nice thinking. You spotted the water ice. Keep going!");
+  assert.equal(spokenFeedback({ strengths: [], gaps: [], next_questions: [] }), "");
+});

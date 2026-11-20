@@ -9,6 +9,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { cn } from "@/lib/utils";
 
 export type OrbMode = "idle" | "speaking" | "listening";
+const FADE = "radial-gradient(ellipse closest-side at center, #000 45%, transparent 100%)";
 export interface VoiceOrbHandle {
   setMode: (mode: OrbMode) => void;
   pulse: (strength?: number) => void;
@@ -42,7 +43,7 @@ export const VoiceOrb = forwardRef<VoiceOrbHandle, { className?: string }>(funct
         if (disposed) return;
         let s: InstanceType<typeof NeuralScene>;
         try {
-          s = new NeuralScene(canvas, { mobile: true, reduced, centered: true, zoom: 2.3 });
+          s = new NeuralScene(canvas, { mobile: true, reduced, centered: true, zoom: 2.3, transparent: true });
         } catch {
           setFailed(true);
           return;
@@ -80,11 +81,13 @@ export const VoiceOrb = forwardRef<VoiceOrbHandle, { className?: string }>(funct
   }, []);
 
   return (
-    <div className={cn("relative overflow-hidden rounded-xl bg-[#080809]", className)} aria-hidden>
+    // No box: the neuron is drawn on the page and its dendrites fade out softly towards the edges
+    <div className={cn("relative", className)} style={{ maskImage: FADE, WebkitMaskImage: FADE }} aria-hidden>
       {!failed ? (
         <canvas
           ref={canvasRef}
-          className={cn("absolute inset-0 h-full w-full transition-opacity duration-700 ease-out", ready ? "opacity-100" : "opacity-0")}
+          // Dark theme: light only adds to the page (dim lines can't darken it); light theme: drawn as is
+          className={cn("absolute inset-0 h-full w-full transition-opacity duration-700 ease-out dark:mix-blend-screen", ready ? "opacity-100" : "opacity-0")}
         />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center">

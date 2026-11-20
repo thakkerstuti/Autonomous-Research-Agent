@@ -549,3 +549,23 @@ def test_answers_are_rate_limited_generously(client, token, running):
     codes = [client.put(url(running, "/answers"), headers=bearer(token), json={"question_id": qid, "answer": f"draft {i}"}).status_code
              for i in range(reflection_api.ANSWER_LIMIT + 1)]
     assert codes[:-1] == [200] * reflection_api.ANSWER_LIMIT and codes[-1] == 429
+
+
+# ───────── the spoken, encouraging message ─────────
+
+def test_feedback_has_an_encouraging_spoken_message_without_citations():
+    out = rf.FeedbackOut(strengths=["You saw it [E1]."], gaps=[], next_questions=["a?", "b?", "c?"],
+                         spoken="You already knew that **water ice** is there [E1], and the research confirms it [E9]. Keep going!")
+    fb = rf._clean_feedback(out, {"E1"})
+    assert fb["spoken"] == "You already knew that water ice is there, and the research confirms it. Keep going!"
+    assert "spoken" in rf.feedback_prompt("Q", [{"text": "Why?", "answer": "Because"}], "findings", paper=False)
+
+
+def test_feedback_route_returns_the_spoken_message(client, token, running):
+    h = bearer(token)
+    qid = client.get(url(running), headers=h).json()["questions"][0]["id"]
+    client.put(url(running, "/answers"), headers=h, json={"question_id": qid, "answer": "Water ice near the pole"})
+    finish_run(running)
+    fb = client.post(url(running, "/feedback"), headers=h).json()["feedback"]
+    assert fb["spoken"].startswith("You already had a good sense of this: Water ice near the pole")
+    assert "[" not in fb["spoken"]

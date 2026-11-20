@@ -29,6 +29,16 @@ export interface ReflectionFeedback {
   strengths: string[];
   gaps: string[];
   next_questions: string[];
+  /** Said aloud when the answer is ready: what the user already knew, and encouragement (may be empty). */
+  spoken?: string;
+}
+
+/** The message to say aloud: the server's, or one made from the first strength. Pure. */
+export function spokenFeedback(fb: ReflectionFeedback): string {
+  const own = (fb.spoken ?? "").trim();
+  if (own) return own;
+  const first = (fb.strengths[0] ?? "").replace(/\s*\[[^\]]*\]/g, "").trim();
+  return first ? `Nice thinking. ${first} Keep going!` : "";
 }
 
 export interface Reflection {

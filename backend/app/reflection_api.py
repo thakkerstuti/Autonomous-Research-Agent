@@ -119,7 +119,7 @@ def payload(db: Session, t: Target) -> dict:
         "limit_reached": len(r.questions or []) >= rf.MAX_QUESTIONS,
         "run_done": t.done(db),
         "answered": len(rf.answered(r)),
-        "feedback": {k: fb.get(k, []) for k in ("strengths", "gaps", "next_questions")} if fb else None,
+        "feedback": {**{k: fb.get(k, []) for k in ("strengths", "gaps", "next_questions")}, "spoken": fb.get("spoken") or ""} if fb else None,
         "feedback_current": bool(fb) and fb.get("answers_key") == rf.answers_key(r),
     }
 

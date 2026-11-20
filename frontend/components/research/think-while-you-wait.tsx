@@ -14,16 +14,16 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Lightbulb, Pause, PowerOff, RotateCcw, SkipForward, Sparkles, X } from "lucide-react";
+import { ArrowRight, Lightbulb, Pause, PowerOff, RotateCcw, SkipForward, Sparkles, Volume2, X } from "lucide-react";
 import { CitationChip } from "@/components/research/report-body";
 import { VoiceQuestion } from "@/components/research/voice-question";
 import { VoiceOrb, type VoiceOrbHandle } from "@/components/research/voice-orb";
-import { voiceSupported } from "@/lib/voice";
+import { speak, voiceSupported } from "@/lib/voice";
 import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ApiError } from "@/lib/api-error";
 import type { ViewEvidence } from "@/lib/research-view";
 import {
-  ANSWER_MAX, FINISH_THOUGHT_MS, createAutosaver, firstQuestionIndex, getReflection, idleTimeoutMs, isMidThought, isOpen,
+  ANSWER_MAX, FINISH_THOUGHT_MS, spokenFeedback, createAutosaver, firstQuestionIndex, getReflection, idleTimeoutMs, isMidThought, isOpen,
   nextQuestionIndex,
   pauseReflection, requestFeedback, requestNextBatch, resumeReflection, saveAnswer, shouldRequestNextBatch,
   useAskQuestions, type Autosaver, type QuestionKind, type Reflection, type ReflectionTarget, type SaveState,
@@ -237,6 +237,25 @@ export function ThinkWhileYouWait({
   useEffect(() => setVoice(voiceSupported()), []);
   const heardRef = useRef("");  // words heard for the current question (the user is mid-answer)
   const orbRef = useRef<VoiceOrbHandle>(null);
+  const voiceRef = useRef(false);
+  voiceRef.current = voice;
+
+  /* ── the answer is ready: the encouraging message, said aloud by the orb ── */
+  const feedbackOrbRef = useRef<VoiceOrbHandle>(null);
+  const [sayingFeedback, setSayingFeedback] = useState(false);
+  const feedbackSpeech = useRef<{ cancel: () => void } | null>(null);
+  const sayFeedback = useCallback((text: string) => {
+    if (!text || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    feedbackSpeech.current?.cancel();
+    setSayingFeedback(true);
+    const speech = speak(text, { onWord: () => feedbackOrbRef.current?.pulse(0.4) });
+    feedbackSpeech.current = speech;
+    speech.done.catch(() => undefined).finally(() => {
+      if (feedbackSpeech.current === speech) setSayingFeedback(false);
+    });
+  }, []);
+  useEffect(() => { if (sayingFeedback) feedbackOrbRef.current?.setMode("speaking"); }, [sayingFeedback]);
+  useEffect(() => () => feedbackSpeech.current?.cancel(), []);
 
   const pause = useCallback((reason: "busy" | "idle") =>
     act("pause", async () => {
@@ -264,28 +283,33 @@ export function ThinkWhileYouWait({
     setFeedbackError(null);
     try {
       await saver.flush(); // the last answer is always included
-      setR(await requestFeedback(target));
+      const next = await requestFeedback(target);
+      setR(next);
+      // Written just now (not reopened later): say it aloud when the user answers by voice
+      if (voiceRef.current && next.feedback) sayFeedback(spokenFeedback(next.feedback));
     } catch (err) {
       setFeedbackError(err instanceof ApiError && err.status === 400 ? null : message(err));
     } finally {
       setFeedbackBusy(false);
     }
-  }, [saver, setR, target]);
+  }, [saver, setR, target, sayFeedback]);
   // The result arrived while the user was mid-answer: "Finish your thought?" instead of feedback at once.
   // Declared before the automatic feedback below, so it decides first.
   const focusedRef = useRef(false);
   const finishingRef = useRef(false);
   const [finishing, setFinishing] = useState(false);
   const [typedAt, setTypedAt] = useState(0);
-  const wasRunning = useRef(running);
-  useEffect(() => {
-    if (wasRunning.current && !running
+  // Decided in the same render in which the run finishes (not in an effect after it), so the card never
+  // shows the result for one frame first: that would unmount the voice question and speak it again.
+  const [prevRunning, setPrevRunning] = useState(running);
+  if (prevRunning !== running) {
+    setPrevRunning(running);
+    if (prevRunning && !running
       && isMidThought({ focused: focusedRef.current || !!heardRef.current, hasPending: saver.hasPending() })) {
       finishingRef.current = true;
       setFinishing(true);
     }
-    wasRunning.current = running;
-  }, [running, saver]);
+  }
   const finishThought = useCallback(() => {
     if (!finishingRef.current) return;
     finishingRef.current = false;
@@ -372,7 +396,7 @@ export function ThinkWhileYouWait({
       title={label}
       className={cn(
         "pressable flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:opacity-40",
-        primary ? "bg-primary text-on-primary" : "bg-white/[0.06] text-[#c9d4ff] hover:bg-white/[0.12] hover:text-white",
+        primary ? "bg-primary text-on-primary" : "bg-ink/[0.06] text-ink-soft hover:bg-ink/[0.1] hover:text-ink",
       )}
     >
       {icon}
@@ -386,7 +410,7 @@ export function ThinkWhileYouWait({
       className={cn("animate-msg-in relative", className)}
     >
       <div className="relative">
-        <VoiceOrb ref={orbRef} className="h-[220px] w-full shadow-panel sm:h-[260px]" />
+        <VoiceOrb ref={orbRef} className="h-[280px] w-full sm:h-[320px]" />
         {question && (
           <VoiceQuestion
             key={question.id}
@@ -405,7 +429,7 @@ export function ThinkWhileYouWait({
             }}
           />
         )}
-        <div className="absolute inset-x-0 bottom-3 flex items-center justify-center gap-2">
+        <div className="absolute inset-x-0 bottom-1 flex items-center justify-center gap-2">
           {finishingMode
             ? iconButton("Get feedback", <Sparkles size={16} />, finishVoice, true)
             : question && (
@@ -467,6 +491,21 @@ export function ThinkWhileYouWait({
             </button>
           )}
         </div>
+        {sayingFeedback && <VoiceOrb ref={feedbackOrbRef} className="-mx-4 h-[200px] sm:-mx-5" />}
+        {r.feedback && spokenFeedback(r.feedback) && (
+          <div className="mt-3 flex items-start gap-2">
+            <p className="flex-1 text-[15.5px] leading-relaxed text-ink">{spokenFeedback(r.feedback)}</p>
+            <button
+              type="button"
+              onClick={() => sayFeedback(spokenFeedback(r.feedback!))}
+              aria-label="Hear it again"
+              title="Hear it again"
+              className="pressable flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-ink-soft hover:bg-ink/[0.06] hover:text-ink"
+            >
+              <Volume2 size={15} />
+            </button>
+          </div>
+        )}
         {r.feedback ? (
           <div className="mt-3 grid gap-4 text-[14px] leading-relaxed text-ink">
             {r.feedback.strengths.length > 0 && (

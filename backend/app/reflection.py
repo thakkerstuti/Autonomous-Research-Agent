@@ -470,6 +470,10 @@ class FeedbackOut(BaseModel):
     strengths: list[str]
     gaps: list[str]
     next_questions: list[str]
+    spoken: str = ""  # said aloud when the answer is ready: what they already knew, and encouragement
+
+
+SPOKEN_MAX = 600
 
 
 FEEDBACK_INSTRUCTIONS = """Someone answered questions about their own question while an AI researched it. Compare their thinking with what the research found, to widen their thinking. You are encouraging, never grading: never say "wrong", "incorrect" or "mistake".
@@ -478,6 +482,7 @@ Return JSON with:
 - strengths: up to 4 short items, each naming something they thought of that the findings support, with its citation. Example: "You spotted that the south pole may hold water ice; the evidence agrees CITE."
 - gaps: up to 4 short items phrased as invitations, about something the findings show that they haven't considered. Example: "Have you thought about the mission's cost? Sources show it was kept unusually low CITE."
 - next_questions: exactly 3 short follow-up questions they could ask next to go deeper (no citations).
+- spoken: 2 or 3 short sentences that will be SAID ALOUD to them when the answer is ready, warm and motivating. Start with what they already knew or thought that the research supports, in their own terms (for example: "You already knew that the south pole may hold water ice, and the research confirms it."). Then give one thing worth exploring next, as an invitation, and end with a short encouragement. Plain spoken language: no citations, brackets, lists or markdown. If their answers were very short, still find something genuine to build on.
 
 Rules: cite only with the ids listed under FINDINGS, written exactly as CITE_FORMAT; never invent ids. Each item is one or two sentences, warm and specific, addressed to "you". If an answer is very short, still find something genuine to build on.
 
@@ -554,8 +559,10 @@ def _clean_feedback(out: FeedbackOut, valid_evidence=None, valid_pages=None) -> 
             if t and t not in cleaned:
                 cleaned.append(t)
         return cleaned[:limit]
+    spoken = re.sub(r"\s*\[[^\]]*\]", "", " ".join(str(out.spoken or "").split()))  # no citations when spoken
+    spoken = re.sub(r"[*_#`>]", "", spoken).strip()[:SPOKEN_MAX]
     return {"strengths": items(out.strengths, FEEDBACK_ITEMS), "gaps": items(out.gaps, FEEDBACK_ITEMS),
-            "next_questions": items(out.next_questions, NEXT_QUESTIONS, cite=False)}
+            "next_questions": items(out.next_questions, NEXT_QUESTIONS, cite=False), "spoken": spoken}
 
 
 def feedback_prompt(subject: str, qa: list[dict], findings: str, paper: bool) -> str:
@@ -576,6 +583,8 @@ def _mock_feedback(qa: list[dict], valid_evidence=None, valid_pages=None) -> Fee
         strengths=[f"You thought carefully about this: \"{first}\". The findings back part of your view{cite}."],
         gaps=[f"Have you thought about where the sources disagree? They show more than one side{cite}."],
         next_questions=["What evidence would change your mind?", "Who is most affected by this?", "What would you want to know next?"],
+        spoken=f"You already had a good sense of this: {qa[0]['answer'].rstrip('.')}. The research backs part of that up{cite}. "
+               "Next, it's worth looking at where the sources disagree. Great thinking, keep going!",
     )
 
 

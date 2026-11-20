@@ -263,14 +263,15 @@ export class NeuralScene {
   private zoom = 1; // the voice card shows the neuron close up
   private voice = 0;
 
-  constructor(private canvas: HTMLCanvasElement, opts: { mobile: boolean; reduced: boolean; centered?: boolean; zoom?: number }) {
+  constructor(private canvas: HTMLCanvasElement, opts: { mobile: boolean; reduced: boolean; centered?: boolean; zoom?: number; transparent?: boolean }) {
     this.reduced = opts.reduced;
     this.zoom = opts.zoom ?? 1;
     this.centered = !!opts.centered;
     this.S = opts.mobile ? 21 : 28;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
+    // transparent: the voice card draws the neuron straight onto the page (no box behind it)
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: !!opts.transparent, powerPreference: "high-performance" });
     // Opaque ground so additive light only ever brightens (a transparent canvas lets dim lines darken the page)
-    this.renderer.setClearColor(0x080809, 1);
+    this.renderer.setClearColor(0x080809, opts.transparent ? 0 : 1);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, opts.mobile ? 1.5 : 2));
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
     this.camera.position.set(0, 0, 9);
@@ -278,6 +279,9 @@ export class NeuralScene {
     this.scene.add(this.world);
     this.world.add(this.spin);
     this.world.add(this.graph);
+    // Without a background (the voice card) only the neuron is drawn: the landing page's story layer
+    // (question, hypotheses, sources, page) has dark lines that would show on the page
+    this.graph.visible = !opts.transparent;
 
     const rand = mulberry32(11);
     const randUnit = () => {
