@@ -223,7 +223,7 @@ export default function DashboardPage() {
     if (!investigations) out.push({ title: "Ask your first research question", why: "CogNexa finds and checks sources, then answers or writes a full paper.", href: "/research" });
     if (!paperList.length) out.push({ title: "Bring a paper to study", why: "Upload a PDF and read it page by page.", href: "/paper-study" });
     return out.slice(0, 4);
-  }, [sessionList, paperList, latestPaper]);
+  }, [sessionList, paperList, latestPaper, investigations]);
 
   const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
