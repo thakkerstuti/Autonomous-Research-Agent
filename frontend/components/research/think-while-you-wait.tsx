@@ -24,10 +24,10 @@ import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ApiError } from "@/lib/api-error";
 import type { ViewEvidence } from "@/lib/research-view";
 import {
-  ANSWER_MAX, FINISH_THOUGHT_MS, spokenFeedback, createAutosaver, firstQuestionIndex, getReflection, idleTimeoutMs, isMidThought, isOpen,
+  ANSWER_MAX, FINISH_THOUGHT_MS, spokenFeedback, voiceIntent, createAutosaver, firstQuestionIndex, getReflection, idleTimeoutMs, isMidThought, isOpen,
   nextQuestionIndex,
   pauseReflection, requestFeedback, requestNextBatch, resumeReflection, saveAnswer, shouldRequestNextBatch,
-  useAskQuestions, type Autosaver, type QuestionKind, type Reflection, type ReflectionTarget, type SaveState,
+  type Autosaver, type QuestionKind, type Reflection, type ReflectionTarget, type SaveState,
 } from "@/lib/reflection";
 import { cn } from "@/lib/utils";
 
@@ -80,33 +80,6 @@ function CitedText({ text, evidence, onOpenPage }: {
   );
 }
 
-/* ───────── the setting ───────── */
-
-export function AskQuestionsSetting({ className }: { className?: string }) {
-  const [on, setOn] = useAskQuestions();
-  return (
-    <label className={cn("inline-flex cursor-pointer select-none items-center gap-2 text-[12.5px] text-ink-soft", className)}>
-      <span>Ask me questions while I wait</span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        onClick={() => setOn(!on)}
-        className={cn("inline-flex h-[18px] w-8 flex-shrink-0 items-center rounded-full p-[2px] transition-colors", on ? "bg-accent" : "bg-ink/20")}
-      >
-        <span aria-hidden className={cn("block h-[14px] w-[14px] rounded-full bg-bg shadow-sm transition-transform", on ? "translate-x-[14px]" : "translate-x-0")} />
-      </button>
-      <span className="w-6 text-ink-faint">{on ? "On" : "Off"}</span>
-    </label>
-  );
-}
-
-/** While a run works and the setting is off: the switch alone, so it can be turned back on. */
-export function AskQuestionsWhenOff({ className }: { className?: string }) {
-  const [on] = useAskQuestions();
-  return on ? null : <AskQuestionsSetting className={className} />;
-}
-
 /* ───────── the card ───────── */
 
 export function ThinkWhileYouWait({
@@ -132,7 +105,7 @@ export function ThinkWhileYouWait({
    *  "inline" = a voice bar here (Paper Study, which has no message bar). */
   surface?: "composer" | "inline";
 }) {
-  const [enabled, setEnabled] = useAskQuestions();
+  const enabled = true; // always on: every research run asks by voice
   const queryClient = useQueryClient();
   // Stable while it's the same run or paper (the page passes a new object on every render)
   const { kind: targetKind, id: targetId } = targetProp;
@@ -339,6 +312,16 @@ export function ThinkWhileYouWait({
 
   const answerByVoice = useCallback(async (questionId: string, text: string) => {
     heardRef.current = "";
+    const intent = voiceIntent(text);
+    if (intent === "stop") return void pauseRef.current("busy"); // "stop", "I don't want to answer": quietly ends
+    if (intent === "skip") {
+      const next = await saveAnswer(target, { question_id: questionId, skipped: true }).catch(() => null);
+      if (next) {
+        setR(next);
+        setIndex(nextQuestionIndex(next.questions, index ?? -1));
+      }
+      return;
+    }
     const answer = text.slice(0, ANSWER_MAX);
     setDrafts((d) => ({ ...d, [questionId]: answer }));
     saver.change(questionId, answer);
@@ -348,7 +331,7 @@ export function ThinkWhileYouWait({
       const qs = (queryClient.getQueryData(key) as Reflection | null)?.questions ?? questions;
       return nextQuestionIndex(qs.map((q) => (q.id === questionId ? { ...q, answer } : q)), i ?? -1);
     });
-  }, [saver, finishThought, queryClient, key, questions]);
+  }, [saver, finishThought, queryClient, key, questions, target, setR, index]);
 
   /** "Get feedback" while the user is still talking: what was heard so far counts as their answer. */
   const finishVoice = useCallback(() => {
@@ -366,26 +349,7 @@ export function ThinkWhileYouWait({
   const voiceAsking = !voiceFinishing && !resultShown && voice && !!r && r.status !== "paused"
     && !(r.status === "failed" && !questions.length);
   const barOn = enabled && !dismissed && !!r && (voiceFinishing || voiceAsking || sayingFeedback);
-  const skipQuestion = () => {
-    if (!current) return;
-    const q = current;
-    void act("skip", async () => {
-      heardRef.current = "";
-      saver.discard(q.id);
-      const next = await saveAnswer(target, { question_id: q.id, skipped: true });
-      setIndex(nextQuestionIndex(next.questions, index ?? -1));
-      return next;
-    });
-  };
-  const controls: BarControls = sayingFeedback && !voiceFinishing && !voiceAsking
-    ? { stop: () => feedbackSpeech.current?.cancel() }
-    : blocked ? { start: () => { setBlocked(false); setVoiceRetry((n) => n + 1); } }
-    : voiceFinishing ? { feedback: finishVoice }
-    : {
-      ...(waitingNow ? {} : { skip: skipQuestion }),
-      pause: () => { heardRef.current = ""; void pause("busy"); },
-      off: () => { heardRef.current = ""; setEnabled(false); },
-    };
+  const controls: BarControls = {}; // no buttons: the user answers, says "skip" or "stop", or stays silent
   useEffect(() => {
     const bar = useVoiceBar.getState();
     if (!barOn) return bar.release(owner);
@@ -444,19 +408,17 @@ export function ThinkWhileYouWait({
           onHeard={(text) => { heardRef.current = text; setTypedAt(Date.now()); flare(0.45); }}
           onWord={() => flare(0.35)}
           onPhase={(phase) => {
-            setBlocked(phase === "blocked");
+            if (phase === "blocked") return void pause("idle"); // the browser won't speak here: stop quietly
             voiceMode.current = phase === "speaking" ? "speaking" : phase === "listening" ? "listening" : "idle";
             useVoiceBar.getState().setMode(owner, voiceMode.current);
           }}
-          onFallback={(code) => {
-            setVoice(false);
-            setVoiceNote(code === "not-allowed" || code === "service-not-allowed"
-              ? "The microphone is blocked, so you can type your answers instead."
-              : "Voice isn't available here right now, so you can type your answers instead.");
+          onFallback={() => {
+            setVoice(false); // no microphone here: the questions stop quietly
+            void pause("idle");
           }}
         />
       )}
-      {surface === "inline" && <VoiceBar className={className} />}
+      {surface === "inline" && <VoiceBar className={cn("w-full", className)} />}
       {saving === "error" && question && <div className="mt-2 flex">{saveNote}</div>}
       {error && <p role="alert" className="mt-2 text-[12.5px] text-bad">{error}</p>}
     </>
@@ -505,15 +467,6 @@ export function ThinkWhileYouWait({
         {r.feedback && spokenFeedback(r.feedback) && (
           <div className="mt-3 flex items-start gap-2">
             <p className="flex-1 text-[15.5px] leading-relaxed text-ink">{spokenFeedback(r.feedback)}</p>
-            <button
-              type="button"
-              onClick={() => sayFeedback(spokenFeedback(r.feedback!))}
-              aria-label="Hear it again"
-              title="Hear it again"
-              className="pressable flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-ink-soft hover:bg-ink/[0.06] hover:text-ink"
-            >
-              <Volume2 size={15} />
-            </button>
           </div>
         )}
         {r.feedback ? (
@@ -575,23 +528,8 @@ export function ThinkWhileYouWait({
     );
   }
 
-  // Paused ("I'm busy" or idle): a small pill that brings the questions back
-  if (r.status === "paused") {
-    return (
-      <div className={cn("animate-msg-in", className)}>
-        <button
-          type="button"
-          onClick={() => void act("resume", () => resumeReflection(target))}
-          disabled={busy !== null}
-          className="pressable inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3.5 py-1.5 text-[13px] text-ink-soft shadow-sm transition-colors hover:border-accent/50 hover:text-ink disabled:opacity-60"
-        >
-          {busy === "resume" ? <ThinkingMark active size={12} /> : <Lightbulb size={13} className="text-accent" />}
-          Paused · <span className="font-medium text-ink">Keep thinking</span>
-        </button>
-        {error && <p role="alert" className="mt-1.5 text-[12.5px] text-bad">{error}</p>}
-      </div>
-    );
-  }
+  // Stopped (silence, or the user said "stop"): nothing comes back for this run
+  if (r.status === "paused") return null;
 
   // Asking
   const waiting = !current || !isOpen(current) && nextQuestionIndex(questions, index ?? -1) === null;
@@ -599,72 +537,5 @@ export function ThinkWhileYouWait({
   // Voice: the orb stays while the next question is on its way (no thinking text)
   if (voiceAsking) return voiceCard(waiting ? undefined : current);
 
-  return (
-    <section
-      aria-label="Think while you wait"
-      className={cn("animate-msg-in rounded-2xl border border-line bg-surface p-4 sm:p-5", className)}
-      onPointerDownCapture={touch}
-      onFocusCapture={touch}
-      onKeyDownCapture={touch}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <p className="flex items-center gap-2 text-[12.5px] font-medium text-ink-soft">
-          <Lightbulb size={14} className="text-accent" /> Think while you wait
-        </p>
-        <AskQuestionsSetting />
-      </div>
-      {voiceNote && <p className="mt-2 text-[12.5px] text-ink-faint">{voiceNote}</p>}
-
-      {r.status === "failed" && !questions.length ? (
-        <p className="mt-3 text-[13.5px] text-ink-soft">No questions this time. Your answer is on its way.</p>
-      ) : waiting || !current ? (
-        <p className="mt-3 flex items-center gap-2 text-[14px] text-ink-soft" role="status">
-          {moreComing ? <><ThinkingMark active size={13} /> Thinking of another question…</> : "That's all the questions for now. Your answer is on its way."}
-        </p>
-      ) : (
-        <div key={current.id} className="mt-3 animate-view-in" onAnimationEnd={() => setAppeared(true)}>
-          <p className="text-[11.5px] uppercase tracking-[0.06em] text-ink-faint">{KIND_LABEL[current.kind] ?? "A question"}</p>
-          <p className="mt-1 text-[15.5px] leading-snug text-ink">{current.text}</p>
-          {answerBox}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void act("next", async () => {
-                await saver.flush();
-                setIndex(nextQuestionIndex(questions, index ?? -1));
-              })}
-              disabled={!draftText.trim() || busy !== null}
-              className="pressable inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-medium text-on-primary disabled:opacity-40"
-            >
-              Next <ArrowRight size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={() => void act("skip", async () => {
-                saver.discard(current.id);
-                setDrafts((d) => ({ ...d, [current.id]: "" }));
-                const next = await saveAnswer(target, { question_id: current.id, skipped: true });
-                setIndex(nextQuestionIndex(next.questions, index ?? -1));
-                return next;
-              })}
-              disabled={busy !== null}
-              className="pressable inline-flex h-8 items-center rounded-lg border border-line px-3 text-[13px] text-ink hover:border-line-hover disabled:opacity-40"
-            >
-              Skip
-            </button>
-            <button
-              type="button"
-              onClick={() => void pause("busy")}
-              disabled={busy !== null}
-              className="pressable inline-flex h-8 items-center rounded-lg px-2.5 text-[13px] text-ink-soft hover:text-ink disabled:opacity-40"
-            >
-              I&rsquo;m busy
-            </button>
-            {saveNote}
-          </div>
-        </div>
-      )}
-      {error && <p role="alert" className="mt-2 text-[12.5px] text-bad">{error}</p>}
-    </section>
-  );
+  return null; // no voice here (no microphone, or a browser that can't listen): nothing is shown
 }

@@ -316,7 +316,10 @@ export function PaperWorkspace({ paperId, onStudyAnother }: { paperId: string; o
     }
     return (
       <div className="h-full overflow-y-auto">
-        {view === "explain" && <ExplanationView paperId={paperId} onOpenPage={openPage} />}
+        {view === "explain" && (
+          <ExplanationView paperId={paperId} page={focusPage} pageCount={pageCount} onOpenPage={openPage}
+            onPage={(p) => setLayout((l) => setPanelPage(l, focusedPanel(l)!.id, Math.min(Math.max(1, p), pageCount)))} />
+        )}
         {view === "overview" && <OverviewView paperId={paperId} title={paper?.title ?? "Overview"} onOpenPage={openPage} />}
         {view === "questions" && <QuestionsView paperId={paperId} onOpenPage={openPage} />}
         {view === "insights" && <InsightsView paperId={paperId} onOpenPage={openPage} />}

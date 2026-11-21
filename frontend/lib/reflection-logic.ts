@@ -183,3 +183,22 @@ export function createAutosaver(options: AutosaverOptions) {
 }
 
 export type Autosaver = ReturnType<typeof createAutosaver>;
+
+/* ── what the user says instead of answering ── */
+
+const STOP = /\b(stop|cancel|quit|enough|not now|no thanks|no thank you|leave it|later|be quiet|shut up|i'?m busy|i am busy|don'?t ask|do not ask|i don'?t want to (answer|talk|do this|say)|i do not want to (answer|talk)|i don'?t wanna)\b/i;
+const SKIP = /\b(skip|pass|next question|next one|another question|move on)\b/i;
+
+/**
+ * A spoken reply that is a request rather than an answer: "stop" (stop asking for this run) or "skip"
+ * (the next question). Only short replies count, so a real answer that happens to contain "stop"
+ * ("we should stop deforestation because…") is still an answer. Pure.
+ */
+export function voiceIntent(text: string): "stop" | "skip" | null {
+  const t = (text || "").trim().toLowerCase().replace(/[.!?,]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  if (t.split(" ").length > 7) return null;
+  if (STOP.test(t)) return "stop";
+  if (SKIP.test(t)) return "skip";
+  return null;
+}

@@ -8,7 +8,6 @@ import { getAccessToken, recoverFromUnauthorized } from "./auth";
 import { OutputFormat } from "./types";
 import type { RunProgress, RunStatus } from "./run-stages";
 import { runRequestBody } from "./mode-intent";
-import { getAskQuestions } from "./reflection";
 import { ChatMessageDto, ChatSource, parseSSE } from "./chat-stream";
 
 export { STAGE_ORDER, stageStates, runSeconds, parseServerTime } from "./run-stages";
@@ -139,15 +138,14 @@ export const isFinished = (s: RunStatus) => s !== "in_progress";
 export const startRun = (question: string, output_format: OutputFormat, thread_id?: string | null) =>
   apiClient<ResearchRun>("/research/runs", {
     method: "POST",
-    // ask_questions: "Think while you wait" (the user's setting)
-    body: JSON.stringify({ ...runRequestBody(output_format, { question, thread_id }), ask_questions: getAskQuestions() }),
+    body: JSON.stringify(runRequestBody(output_format, { question, thread_id })),
   });
 
 /** The same question again in another mode (Detailed analysis, Research paper); the server takes the question from that session. */
 export const startModeRun = (basedOn: string, output_format: OutputFormat) =>
   apiClient<ResearchRun>("/research/runs", {
     method: "POST",
-    body: JSON.stringify({ ...runRequestBody(output_format, { based_on: basedOn }), ask_questions: getAskQuestions() }),
+    body: JSON.stringify(runRequestBody(output_format, { based_on: basedOn })),
   });
 
 export const getRun = (sessionId: string) => apiClient<ResearchRun>(`/research/runs/${sessionId}`);

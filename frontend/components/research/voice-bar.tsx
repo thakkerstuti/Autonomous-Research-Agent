@@ -3,10 +3,9 @@
 /**
  * The message bar as CogNexa's voice: flowing sound lines that move with the voice (lively while it
  * speaks, gentle while it listens, a flare on each word), and small icon controls. No text and no logo;
- * what is happening is announced to screen readers only.
+ * no buttons; what is happening is announced to screen readers only.
  */
 import { useEffect, useRef } from "react";
-import { Pause, Play, PowerOff, SkipForward, Sparkles, Square } from "lucide-react";
 import { useVoiceBar, type BarMode } from "@/lib/voice-bar";
 import { cn } from "@/lib/utils";
 
@@ -91,30 +90,12 @@ function Wave({ className }: { className?: string }) {
   return <canvas ref={ref} className={className} aria-hidden />;
 }
 
-function Control({ label, onClick, children, primary }: { label: string; onClick: () => void; children: React.ReactNode; primary?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className={cn(
-        "pressable flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[11px] transition-colors",
-        primary ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-ink/[0.06] hover:text-ink",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
 /** The bar itself, the same size and shape as the message box it replaces. */
 export function VoiceBar({ className }: { className?: string }) {
   const mode = useVoiceBar((s) => s.mode);
-  const c = useVoiceBar((s) => s.controls);
   return (
     <div
-      className={cn("animate-msg-in flex h-[56px] items-center gap-1 rounded-[18px] bg-surface py-2 pl-3 pr-2 shadow-panel", className)}
+      className={cn("animate-msg-in flex h-[56px] items-center rounded-[18px] bg-surface px-3 py-2 shadow-panel", className)}
       role="group"
       aria-label="CogNexa voice"
     >
@@ -122,12 +103,6 @@ export function VoiceBar({ className }: { className?: string }) {
         {mode === "speaking" ? "CogNexa is speaking" : mode === "listening" ? "CogNexa is listening" : ""}
       </span>
       <Wave className="h-full min-w-0 flex-1" />
-      {c.start && <Control label="Start talking" onClick={c.start} primary><Play size={16} className="ml-0.5" /></Control>}
-      {c.feedback && <Control label="Get feedback" onClick={c.feedback} primary><Sparkles size={16} /></Control>}
-      {c.skip && <Control label="Skip this question" onClick={c.skip}><SkipForward size={15} /></Control>}
-      {c.pause && <Control label="I'm busy: pause the questions" onClick={c.pause}><Pause size={15} /></Control>}
-      {c.off && <Control label="Stop asking me questions while I wait" onClick={c.off}><PowerOff size={15} /></Control>}
-      {c.stop && <Control label="Stop" onClick={c.stop}><Square size={13} className="fill-current" /></Control>}
     </div>
   );
 }

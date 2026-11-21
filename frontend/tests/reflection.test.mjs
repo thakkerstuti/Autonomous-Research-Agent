@@ -152,3 +152,14 @@ test("feedback: the message said aloud is the server's, or one made from the fir
   assert.equal(spokenFeedback({ strengths: ["You spotted the water ice [E1]."], gaps: [], next_questions: [] }), "Nice thinking. You spotted the water ice. Keep going!");
   assert.equal(spokenFeedback({ strengths: [], gaps: [], next_questions: [] }), "");
 });
+
+test("voice: saying stop or skip is understood; a real answer is not", async () => {
+  const { voiceIntent } = await import("../lib/reflection-logic.ts");
+  for (const t of ["Stop", "stop it", "Cancel.", "I don't want to answer", "not now", "I'm busy", "no thanks", "please stop asking"]) {
+    assert.equal(voiceIntent(t), "stop", t);
+  }
+  for (const t of ["skip", "Skip this one", "pass", "next question please"]) assert.equal(voiceIntent(t), "skip", t);
+  for (const t of ["We should stop deforestation because the trees store carbon", "Because of the water ice", "I don't know much about it", ""]) {
+    assert.equal(voiceIntent(t), null, t);
+  }
+});

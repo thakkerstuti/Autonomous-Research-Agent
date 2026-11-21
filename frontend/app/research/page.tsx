@@ -11,7 +11,7 @@ import { ThinkingMark } from "@/components/research/thinking-mark";
 import { ReportBody, SourceRow } from "@/components/research/report-body";
 import { WorkingFlow, formatDuration } from "@/components/research/working-flow";
 import { PaperCard } from "@/components/research/paper-card";
-import { AskQuestionsWhenOff, ThinkWhileYouWait } from "@/components/research/think-while-you-wait";
+import { ThinkWhileYouWait } from "@/components/research/think-while-you-wait";
 import { VoiceBar } from "@/components/research/voice-bar";
 import { useVoiceBar } from "@/lib/voice-bar";
 import { cn } from "@/lib/utils";
@@ -293,10 +293,7 @@ function Entry({ entry, onRetry, onAction, onAsk, busy }: {
         <ThinkingMark active={pending && !failed} className="mt-[3px]" />
         <div className="min-w-0 flex-1">
           {pending && !failed ? (
-            <>
-              <WorkingFlow progress={run?.progress} status="in_progress" mode={mode} />
-              {run && <AskQuestionsWhenOff className="mt-4" />}
-            </>
+            <WorkingFlow progress={run?.progress} status="in_progress" mode={mode} />
           ) : failed ? (
             <div className="animate-msg-in">
               <p className="text-[15.5px] text-ink">I couldn&apos;t finish this one.</p>
