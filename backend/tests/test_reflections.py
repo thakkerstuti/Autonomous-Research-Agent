@@ -569,3 +569,57 @@ def test_feedback_route_returns_the_spoken_message(client, token, running):
     fb = client.post(url(running, "/feedback"), headers=h).json()["feedback"]
     assert fb["spoken"].startswith("You already had a good sense of this: Water ice near the pole")
     assert "[" not in fb["spoken"]
+
+
+# ───────── honest feedback: no praise for what the evidence doesn't support ─────────
+
+def test_answer_kind_spots_repeats_and_non_answers():
+    q = "Why do you think India chose the lunar south pole for Chandrayaan-3?"
+    assert rf.answer_kind(q, "India chose the lunar south pole for Chandrayaan-3") == "repeat"
+    assert rf.answer_kind(q, "I don't know") == "none"
+    assert rf.answer_kind(q, "maybe") == "none"
+    assert rf.answer_kind(q, "Because shadowed craters may hold water ice") == "real"
+
+
+def test_prompt_marks_repeated_answers_and_demands_honesty():
+    q = "Why do you think India chose the lunar south pole?"
+    prompt = rf.feedback_prompt("Chandrayaan-3", [{"text": q, "answer": "India chose the lunar south pole"}], "findings", paper=False)
+    assert "[REPEATS THE QUESTION]" in prompt and "HONESTLY" in prompt and "EMPTY list" in prompt
+
+
+def test_no_praise_when_the_answers_only_repeat_the_question():
+    q = "Why do you think India chose the lunar south pole?"
+    qa = [{"text": q, "answer": "India chose the lunar south pole"}]
+    # even if the model praises, the guard removes it
+    praising = rf.FeedbackOut(strengths=["You spotted it [E1]."], gaps=["The sources show it was chosen for water ice [E1]."],
+                              next_questions=["a?", "b?", "c?"], spoken="You already knew this, great thinking!")
+    client = FakeClient()
+    client.generate_content = lambda model, contents, config: SimpleNamespace(parsed=praising, text=None)
+    client.models = client
+    fb = rf.write_feedback("Chandrayaan-3", qa, "findings", paper=False, valid_evidence={"E1"}, client=client, models=["m"])
+    assert fb["strengths"] == []
+    assert fb["spoken"].startswith("You tried, but your answers didn't match what the research found.")
+    assert "water ice" in fb["spoken"] and not rf.PRAISE.search(fb["spoken"])
+
+
+def test_spoken_praise_is_removed_when_there_are_no_strengths():
+    qa = [{"text": "What do you expect the evidence will show?", "answer": "That the mission failed because of the weather"}]
+    out = rf.FeedbackOut(strengths=[], gaps=["Sources show the landing succeeded [E2]."], next_questions=["a?", "b?", "c?"],
+                         spoken="You were right about this, well done!")
+    client = FakeClient()
+    client.generate_content = lambda model, contents, config: SimpleNamespace(parsed=out, text=None)
+    client.models = client
+    fb = rf.write_feedback("Chandrayaan-3", qa, "findings", paper=False, valid_evidence={"E2"}, client=client, models=["m"])
+    assert fb["spoken"] == ("You tried, but your answers didn't match what the research found. "
+                            "Sources show the landing succeeded. Have another look at the answer and the sources.")
+
+
+def test_supported_answers_keep_their_praise():
+    qa = [{"text": "Why the south pole?", "answer": "Because shadowed craters may hold water ice"}]
+    out = rf.FeedbackOut(strengths=["You said the craters may hold water ice; the evidence agrees [E1]."], gaps=[],
+                         next_questions=["a?", "b?", "c?"], spoken="You were right that the craters may hold water ice. Keep going!")
+    client = FakeClient()
+    client.generate_content = lambda model, contents, config: SimpleNamespace(parsed=out, text=None)
+    client.models = client
+    fb = rf.write_feedback("Chandrayaan-3", qa, "findings", paper=False, valid_evidence={"E1"}, client=client, models=["m"])
+    assert fb["strengths"] and fb["spoken"].startswith("You were right that the craters")

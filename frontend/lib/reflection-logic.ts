@@ -186,19 +186,40 @@ export type Autosaver = ReturnType<typeof createAutosaver>;
 
 /* ── what the user says instead of answering ── */
 
-const STOP = /\b(stop|cancel|quit|enough|not now|no thanks|no thank you|leave it|later|be quiet|shut up|i'?m busy|i am busy|don'?t ask|do not ask|i don'?t want to (answer|talk|do this|say)|i do not want to (answer|talk)|i don'?t wanna)\b/i;
+// Clear requests to stop: they count anywhere in what was said, even in a long sentence, and even
+// while CogNexa is still speaking or the user hasn't paused yet.
+const STRONG_STOP = new RegExp([
+  "stop (talking|asking|it|now|please|this|that|the questions?)", "please stop", "just stop",
+  "(don'?t|do not) (talk|ask|speak|say anything)", "be quiet", "shut up", "quiet please", "keep quiet",
+  "no more questions?", "no thanks", "no thank you", "enough (questions?|of this|now)", "that'?s enough", "leave me alone", "go away",
+  "i'?m busy", "i am busy", "i'?m not interested", "not interested", "not now",
+  "i (don'?t|do not) want to (answer|talk|do this|say|continue)", "i (don'?t|do not) wanna (answer|talk|do this)",
+  "(cancel|end|close) (it|this|the questions?)",
+].map((p) => `\\b${p}\\b`).join("|"), "i");
+// Plain words that only count as a request when they are the whole reply, or how it ends
+const STOP_WORD = /\b(stop|cancel|quit|enough|later|silence|mute)\b/i;
+const STOP_AT_END = /\b(stop|cancel|quit|enough)( it| now| please| this| that)?$/i;
 const SKIP = /\b(skip|pass|next question|next one|another question|move on)\b/i;
+const SKIP_AT_END = /\b(skip|skip (it|this|this one)|next question|pass)$/i;
 
 /**
  * A spoken reply that is a request rather than an answer: "stop" (stop asking for this run) or "skip"
- * (the next question). Only short replies count, so a real answer that happens to contain "stop"
- * ("we should stop deforestation because…") is still an answer. Pure.
+ * (the next question). Pure.
+ * - live: words still being heard (CogNexa may still be speaking, the user hasn't paused): only clear
+ *   requests ("stop talking", "I'm busy", "I don't want to answer"…) count, so a reply that merely
+ *   starts with "stop" isn't cut off.
+ * - otherwise (the reply is complete): a clear request anywhere; a short reply that is a request
+ *   ("stop", "cancel", "skip"); or a reply that ends with one ("…okay, stop").
+ * A real answer that only mentions the word ("we should stop deforestation because…") stays an answer.
  */
-export function voiceIntent(text: string): "stop" | "skip" | null {
-  const t = (text || "").trim().toLowerCase().replace(/[.!?,]+/g, " ").replace(/\s+/g, " ").trim();
+export function voiceIntent(text: string, opts: { live?: boolean } = {}): "stop" | "skip" | null {
+  const t = (text || "").toLowerCase().replace(/[’]/g, "'").replace(/[.!?,;:]+/g, " ").replace(/\s+/g, " ").trim();
   if (!t) return null;
-  if (t.split(" ").length > 7) return null;
-  if (STOP.test(t)) return "stop";
-  if (SKIP.test(t)) return "skip";
+  if (STRONG_STOP.test(t)) return "stop";
+  if (opts.live) return null;
+  const words = t.split(" ").length;
+  if (words <= 5 && STOP_WORD.test(t)) return "stop";
+  if (STOP_AT_END.test(t)) return "stop";
+  if ((words <= 5 && SKIP.test(t)) || SKIP_AT_END.test(t)) return "skip";
   return null;
 }

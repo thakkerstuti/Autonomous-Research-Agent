@@ -163,3 +163,24 @@ test("voice: saying stop or skip is understood; a real answer is not", async () 
     assert.equal(voiceIntent(t), null, t);
   }
 });
+
+
+test("voice: stop is understood in long replies, at the end of a reply, and while still talking", async () => {
+  const { voiceIntent } = await import("../lib/reflection-logic.ts");
+  for (const t of ["Stop talking", "please stop now", "don't talk", "Okay, I don't want to answer this one right now honestly",
+    "I am really busy at the moment so no more questions", "I think it is water ice, okay stop", "be quiet", "That's enough",
+    "Leave me alone", "Not interested", "Cancel this"]) {
+    assert.equal(voiceIntent(t), "stop", t);
+  }
+  // while CogNexa is speaking or the user hasn't paused, only clear requests count
+  assert.equal(voiceIntent("stop talking", { live: true }), "stop");
+  assert.equal(voiceIntent("I'm busy", { live: true }), "stop");
+  assert.equal(voiceIntent("stop", { live: true }), null); // may still become "stop deforestation…"
+  assert.equal(voiceIntent("stop"), "stop");               // but as a whole reply it is a request
+  // real answers that only mention the word stay answers
+  for (const t of ["We should stop deforestation because the trees store carbon", "The rover had to stop at night to save power",
+    "It passes over the pole every two hours"]) {
+    assert.equal(voiceIntent(t), null, t);
+  }
+  assert.equal(voiceIntent("I'm not sure, skip this one"), "skip");
+});

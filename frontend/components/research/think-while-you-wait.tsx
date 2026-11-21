@@ -405,6 +405,7 @@ export function ThinkWhileYouWait({
           retry={voiceRetry}
           onAnswer={(text) => answerByVoice(question.id, text)}
           onSilent={() => void (finishingRef.current ? finishVoice() : pause("idle"))}
+          onStop={() => { heardRef.current = ""; if (finishingRef.current) finishVoice(); else void pause("busy"); }}
           onHeard={(text) => { heardRef.current = text; setTypedAt(Date.now()); flare(0.45); }}
           onWord={() => flare(0.35)}
           onPhase={(phase) => {
